@@ -1,0 +1,27 @@
+[MASTER]
+# Ignore test directories
+ignore = venv, .git, __pycache__
+
+# Disable specific checks for test files
+[MASTER_OPTIONS]
+ignore-patterns=^test_.*\.py$
+generated-members=cv2.*
+
+[DESIGN]
+# Disable protected-access warning for test files and redefined-outer-name
+disable =   protected-access,
+            redefined-outer-name,
+            broad-exception-raised,
+            broad-exception-caught,
+            line-too-long,
+            logging-fstring-interpolation,
+            unnecessary-ellipsis,
+            unnecessary-pass,
+            missing-module-docstring,
+            missing-class-docstring,
+            missing-function-docstring,
+            unused-variable,
+
+[MESSAGES CONTROL]
+# Disable specific checks for test files
+ignore = test_*.py
