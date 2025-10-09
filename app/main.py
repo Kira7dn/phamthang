@@ -43,9 +43,8 @@ app = FastAPI(title="Extract Panel Pipeline API")
 
 def _get_outputs_base_dir() -> Path | None:
     if os.getenv("IS_PRODUCTION", "").lower() == "true":
-        base_dir = Path("outputs")
-    else:
         return None
+    base_dir = Path("outputs")
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
@@ -60,13 +59,22 @@ async def extract_panel(
     file: UploadFile | None = File(default=None),
     image_url: HttpUrl | None = Query(default=None),
 ) -> JSONResponse:
-    logger.info("/extract called", extra={"has_file": file is not None, "image_url": str(image_url) if image_url else None})
+    logger.info(
+        "/extract called",
+        extra={
+            "has_file": file is not None,
+            "image_url": str(image_url) if image_url else None,
+        },
+    )
     if (file is None and image_url is None) or (
         file is not None and image_url is not None
     ):
         logger.warning(
             "Invalid input combination for /extract",
-            extra={"has_file": file is not None, "has_image_url": image_url is not None},
+            extra={
+                "has_file": file is not None,
+                "has_image_url": image_url is not None,
+            },
         )
         raise HTTPException(
             status_code=400,
@@ -79,20 +87,31 @@ async def extract_panel(
             raise HTTPException(status_code=400, detail="Thiếu tên tệp đầu vào")
         content = await file.read()
         if not content:
-            logger.error("Uploaded file is empty", extra={"filename": file.filename})
+            logger.error(
+                "Uploaded file is empty",
+                extra={"uploaded_filename": file.filename},
+            )
             raise HTTPException(status_code=400, detail="Tệp đầu vào rỗng")
         suffix = Path(file.filename).suffix or ".png"
         await file.close()
-        logger.info("Received file upload", extra={"filename": file.filename, "suffix": suffix})
+        logger.info(
+            "Received file upload",
+            extra={"uploaded_filename": file.filename, "suffix": suffix},
+        )
     else:
         assert image_url is not None
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-                logger.info("Downloading image from URL", extra={"image_url": str(image_url)})
+                logger.info(
+                    "Downloading image from URL", extra={"image_url": str(image_url)}
+                )
                 response = await client.get(str(image_url))
                 response.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.error("Failed to download image", extra={"image_url": str(image_url), "error": str(exc)})
+            logger.error(
+                "Failed to download image",
+                extra={"image_url": str(image_url), "error": str(exc)},
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Không thể tải hình ảnh từ URL: {exc}",
@@ -100,12 +119,17 @@ async def extract_panel(
 
         content = response.content
         if not content:
-            logger.error("Downloaded content is empty", extra={"image_url": str(image_url)})
+            logger.error(
+                "Downloaded content is empty", extra={"image_url": str(image_url)}
+            )
             raise HTTPException(status_code=400, detail="Nội dung ảnh từ URL rỗng")
 
         parsed_url = urlparse(str(image_url))
         suffix = Path(parsed_url.path).suffix or ".png"
-        logger.info("Downloaded image successfully", extra={"image_url": str(image_url), "suffix": suffix})
+        logger.info(
+            "Downloaded image successfully",
+            extra={"image_url": str(image_url), "suffix": suffix},
+        )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_file.write(content)
@@ -117,13 +141,25 @@ async def extract_panel(
     if output_base is not None:
         output_dir = output_base / uuid.uuid4().hex
         output_dir.mkdir(parents=True, exist_ok=False)
-        logger.info("Prepared output directory", extra={"output_dir": str(output_dir)})
+        logger.info(
+            f"Using output directory: {str(output_dir)}",
+            extra={
+                "output_dir": str(output_dir),
+                "output_dir_absolute": str(output_dir.resolve()),
+            },
+        )
 
     try:
         pipeline = ExtractPanelPipeline(output_dir=output_dir)
-        logger.info("Starting pipeline execution", extra={"output_dir": str(output_dir) if output_dir else None})
+        logger.info(
+            "Starting pipeline execution",
+            extra={"output_dir": str(output_dir) if output_dir else None},
+        )
         result = await asyncio.to_thread(pipeline.run, tmp_path)
-        logger.info("Pipeline execution completed", extra={"output_dir": str(output_dir) if output_dir else None})
+        logger.info(
+            "Pipeline execution completed",
+            extra={"output_dir": str(output_dir) if output_dir else None},
+        )
         payload = result.model_dump()
         return JSONResponse(content=payload)
     except RuntimeError as exc:
@@ -131,7 +167,9 @@ async def extract_panel(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         tmp_path.unlink(missing_ok=True)
-        logger.info("Cleaned up temporary input file", extra={"tmp_path": str(tmp_path)})
+        logger.info(
+            "Cleaned up temporary input file", extra={"tmp_path": str(tmp_path)}
+        )
 
 
 @app.delete("/outputs")
