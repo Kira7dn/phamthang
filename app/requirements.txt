@@ -1,0 +1,8 @@
+opencv-python==4.10.0.84
+numpy==1.26.4
+pydantic-ai-slim[google,openai]
+python-dotenv
+fastapi
+uvicorn
+python-multipart
+httpx

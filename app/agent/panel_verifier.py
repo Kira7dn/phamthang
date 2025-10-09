@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -10,6 +11,10 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+
+
+# Module logger
+logger = logging.getLogger("app.agent.panel_verifier")
 
 
 # ======== Shared schemas (aligned with image_llm.py) ========
@@ -80,7 +85,7 @@ def create_canonical_prompt() -> str:
 
     Rules:
     1. Do NOT modify `outer_width`, `outer_height`, or `panel_index`.
-    2. Group panels by identical (`outer_width`, `outer_height`).
+    2. Group panels by identical (`block_no`, `outer_height`).
     3. For each group:
        a. Identify all panels with non-empty `inner_heights`.
        b. Select a canonical hinge spacing pattern using these priorities (in order):
@@ -104,6 +109,13 @@ class PanelVerifyAgent:
     ) -> None:
         self.model_id = model_id
         self.output_dir = output_dir
+        logger.info(
+            "Initializing PanelVerifyAgent",
+            extra={
+                "model_id": model_id,
+                "output_dir": str(output_dir) if output_dir else None,
+            },
+        )
         self.partial_prompt = create_partial_fix_prompt()
         self.canonical_prompt = create_canonical_prompt()
 
@@ -123,18 +135,22 @@ class PanelVerifyAgent:
             message = "Thiếu biến môi trường OPENAI_API_KEY cho OpenAI API"
             print(message, file=sys.stderr)
             raise RuntimeError(message)
+        logger.info("OPENAI_API_KEY detected, proceeding with verification")
 
     def _ensure_output_dirs(self) -> None:
         if not self.output_dir:
             return
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Verification output directory prepared", extra={"output_dir": str(self.output_dir)})
 
     def _run_stage(
         self, agent: Agent, aggregated: AggregatedResult
     ) -> AggregatedResult:
+        logger.info("Running verification stage", extra={"agent": agent.model})
         aggregated_json = aggregated.model_dump()
         aggregated_json_str = json.dumps(aggregated_json, ensure_ascii=False)
         result = agent.run_sync(aggregated_json_str)
+        logger.info("Verification stage finished", extra={"agent": agent.model})
         if isinstance(result.output, AggregatedResult):
             return result.output
         return AggregatedResult.model_validate(result.output)
@@ -148,15 +164,19 @@ class PanelVerifyAgent:
             encoding="utf-8",
         )
         print(f"Đã lưu dữ liệu ({filename}): {stage_path}")
+        logger.info("Saved verification stage result", extra={"stage_file": str(stage_path)})
 
     def run(self, aggregated: AggregatedResult) -> AggregatedResult:
         self._ensure_api_key()
         self._ensure_output_dirs()
 
+        logger.info("Starting panel verification pipeline")
         stage1 = self._run_stage(self.partial_agent, aggregated)
+        logger.info("Stage 1 completed")
         self._save_stage(stage1, "stage1.json")
 
         stage2 = self._run_stage(self.canonical_agent, stage1)
+        logger.info("Stage 2 completed")
         self._save_stage(stage2, "stage2.json")
         return stage2
 
@@ -169,7 +189,7 @@ def main():
     output_dir = Path("outputs/panel_agent/verifier")
     if output_dir.exists():
         shutil.rmtree(output_dir)
-    analyze_result = Path("outputs/panel_agent/analyzer/image_analyze.json")
+    analyze_result = Path("outputs/panel_analyze_pipeline/image_analyze.json")
     if not analyze_result.exists():
         print(f"Không tìm thấy file đầu vào: {analyze_result}", file=sys.stderr)
         sys.exit(1)

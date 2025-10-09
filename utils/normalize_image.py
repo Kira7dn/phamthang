@@ -27,22 +27,12 @@ def normalize_image(
     pipeline.add("resize", resize_with_limit)
     pipeline.add("normalize_bg", normalize_bg)
     pipeline.add("to_gray", to_gray)
-    pipeline.add("adaptive_threshold", adaptive_threshold)
-    pipeline.add("invert_background", invert_background)
     pipeline.add("clahe", clahe)
     pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
-    # pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
-    pipeline.add(
-        "otsu",
-        lambda image: cv2.threshold(
-            image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )[1],
-    )
+    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (1, 1), 0))
+    pipeline.add("adaptive_threshold", adaptive_threshold)
     pipeline.add("morph_open", lambda image: morph_open(image, (1, 1), 1))
     pipeline.add("morph_close", lambda image: morph_close(image, (2, 2), 1))
-    # pipeline.add("blur", lambda image: cv2.medianBlur(image, 5))
-    # pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
-    # pipeline.add("bridge_horizontal", bridge_horizontal)
     pipeline.add("remove_small_components", remove_small_components)
     pipeline.add("invert_background", invert_background)
     output_image = pipeline.run(image)

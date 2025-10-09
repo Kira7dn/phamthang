@@ -1,0 +1,34 @@
+services:
+  api:
+    build: .
+    image: phamthang-app:latest
+    container_name: phamthang-api
+    env_file:
+      - .env
+    environment:
+      - DEV_MODE=false
+      - IS_PRODUCTION=true
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./outputs:/app/outputs
+    networks:
+      - app_network
+    mem_limit: 1g
+    restart: always
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: phamthang-ngrok
+    command: http api:8000 --authtoken=${NGROK_AUTHTOKEN} --url=${NGROK_URL}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - api
+    networks:
+      - app_network
+    restart: always
+
+networks:
+  app_network:
+    driver: bridge

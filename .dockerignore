@@ -23,6 +23,14 @@ venv/
 ENV/
 env/
 
+# Development assets
+example/
+outputs/
+assets/
+models/
+deploy.sh
+
+
 # Development files
 test/
 test_*.py

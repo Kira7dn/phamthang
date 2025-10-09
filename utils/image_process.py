@@ -4,9 +4,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from pytesseract import pytesseract
-
-os.environ["TESSDATA_PREFIX"] = "/usr/share/tesseract-ocr/5/tessdata/"
 
 
 def make_text_mask(
@@ -325,116 +322,6 @@ def visualize_boxes(
                 cv2.LINE_AA,
             )
     return vis
-
-
-class TesseractNode:
-    def __init__(
-        self,
-        lang: str = "eng",
-        psm: int = 6,
-        whitelist: Optional[str] = None,
-        dpi: int = 300,
-        numeric_mode: bool = False,
-        min_xheight: float = 6.0,
-        min_linesize: float = 2.0,
-        max_blob_overlaps: int = 0,
-        enhance_small_roi: bool = True,
-        min_small_dim: int = 40,
-    ):
-        self.lang = lang
-        self.psm = psm
-        self.whitelist = whitelist
-        self.dpi = dpi
-        self.numeric_mode = numeric_mode
-        self.min_xheight = min_xheight
-        self.min_linesize = min_linesize
-        self.max_blob_overlaps = max_blob_overlaps
-        self.enhance_small_roi = enhance_small_roi
-        self.min_small_dim = min_small_dim
-
-    def recognize(
-        self,
-        image: np.ndarray,
-        crop_size: Optional[Tuple[int, int, int, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        region = image
-        if crop_size:
-            x, y, w, h = crop_size
-            region = region[y : y + h, x : x + w]
-
-        if region.ndim == 3:
-            region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-
-        scale_factor = max(1, self.dpi // 100)
-        if scale_factor > 1:
-            region = cv2.resize(
-                region,
-                None,
-                fx=scale_factor,
-                fy=scale_factor,
-                interpolation=cv2.INTER_CUBIC,
-            )
-
-        # Optional enhancement for tiny ROIs after scaling
-        if self.enhance_small_roi:
-            h, w = region.shape[:2]
-            if min(h, w) < self.min_small_dim:
-                # light blur to reduce noise
-                region = cv2.GaussianBlur(region, (3, 3), 0)
-                # OTSU binary (non-inverted)
-                _, region = cv2.threshold(
-                    region, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-                )
-                # gentle dilation to thicken strokes
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-                region = cv2.dilate(region, kernel, iterations=1)
-
-        config_parts = [
-            "--oem 3",
-            f"--psm {self.psm}",
-            f"-c user_defined_dpi={self.dpi}",
-        ]
-        if self.whitelist:
-            config_parts.append(f"-c tessedit_char_whitelist={self.whitelist}")
-        # Numeric mode and layout tuning for small numeric text
-        if self.numeric_mode:
-            config_parts.extend(
-                [
-                    "-c classify_bln_numeric_mode=1",
-                    f"-c textord_min_xheight={self.min_xheight}",
-                    f"-c textord_min_linesize={self.min_linesize}",
-                    f"-c textord_max_blob_overlaps={self.max_blob_overlaps}",
-                ]
-            )
-            config_parts.append(f"-c tessedit_char_whitelist={self.whitelist}")
-        config = " ".join(config_parts)
-
-        data = pytesseract.image_to_data(
-            region,
-            lang=self.lang,
-            config=config,
-            output_type=pytesseract.Output.DICT,
-        )
-
-        results: List[Dict[str, Any]] = []
-        for idx, raw_text in enumerate(data["text"]):
-            text = (raw_text or "").strip()
-            try:
-                conf = float(data["conf"][idx])
-            except (KeyError, ValueError, TypeError):
-                continue
-            if not text or conf <= 0:
-                continue
-
-            bbox = (
-                int(data["left"][idx]),
-                int(data["top"][idx]),
-                int(data["width"][idx]),
-                int(data["height"][idx]),
-            )
-            results.append({"text": text, "confidence": conf, "bbox": bbox})
-
-        return results
 
 
 def resize_with_limit(img, max_width=1920, max_height=1920):

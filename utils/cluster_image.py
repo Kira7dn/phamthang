@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+import math
 import shutil
 
 import cv2
@@ -12,6 +13,8 @@ from utils.image_process import (
     ImagePipeline,
     adaptive_threshold,
     enhance_lines,
+    morph_close,
+    morph_open,
     normalize_bg,
     resize_with_limit,
     to_gray,
@@ -23,6 +26,13 @@ class Block:
     index: int
     bbox: Tuple[int, int, int, int]
     area: int
+
+
+BLOCK_COLOR_PRESETS: Dict[int, Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = {
+    1: ((0, 0, 255), (0, 0, 255)),
+    2: ((0, 255, 0), (0, 255, 0)),
+    3: ((0, 255, 255), (0, 255, 255)),
+}
 
 
 def cluster_components(
@@ -56,14 +66,22 @@ def extract_blocks(
     return blocks
 
 
-def draw_blocks(image: np.ndarray, blocks: Sequence[Block]) -> np.ndarray:
+def draw_blocks(
+    image: np.ndarray,
+    blocks: Sequence[Block],
+    color_choice: int = 1,
+) -> np.ndarray:
+    palette_box, palette_text = BLOCK_COLOR_PRESETS.get(
+        color_choice, BLOCK_COLOR_PRESETS[1]
+    )
+
     vis = image.copy()
     # Ensure we draw on 3-channel image so BGR colors are visible
     if len(vis.shape) == 2 or (vis.ndim == 3 and vis.shape[2] == 1):
         vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
     for blk in blocks:
         x, y, w, h = blk.bbox
-        cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        cv2.rectangle(vis, (x, y), (x + w, y + h), palette_box, 2)
         label = f"{blk.index}: {w}x{h}"
         cv2.putText(
             vis,
@@ -71,11 +89,80 @@ def draw_blocks(image: np.ndarray, blocks: Sequence[Block]) -> np.ndarray:
             (x, max(0, y - 10)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
-            (0, 0, 255),
+            palette_text,
             2,
             cv2.LINE_AA,
         )
     return vis
+
+
+def merge_nearby_small_blocks(
+    blocks: Sequence[Block],
+    ratio_threshold: float = 0.2,
+    distance_ratio: float = 0.5,
+) -> List[Block]:
+
+    sorted_blocks = sorted(blocks, key=lambda blk: blk.area, reverse=True)
+    merged_flags = [False] * len(sorted_blocks)
+    merged: List[Block] = []
+
+    for i, large in enumerate(sorted_blocks):
+        if merged_flags[i]:
+            continue
+
+        x, y, w, h = large.bbox
+        if w <= 0 or h <= 0:
+            merged_flags[i] = True
+            continue
+
+        base_area = max(1, w * h)
+        current_width = w
+        current_height = h
+        cx_large = x + current_width / 2.0
+        cy_large = y + current_height / 2.0
+
+        for j in range(i + 1, len(sorted_blocks)):
+            if merged_flags[j]:
+                continue
+
+            small = sorted_blocks[j]
+            sx, sy, sw, sh = small.bbox
+            if sw <= 0 or sh <= 0:
+                merged_flags[j] = True
+                continue
+
+            small_area = sw * sh
+            if small_area / float(base_area) >= ratio_threshold:
+                continue
+
+            cx_small = sx + sw / 2.0
+            cy_small = sy + sh / 2.0
+            dist = math.hypot(cx_large - cx_small, cy_large - cy_small)
+            dist_threshold = distance_ratio * max(current_width, current_height)
+            if dist > dist_threshold:
+                continue
+
+            x_new = min(x, sx)
+            y_new = min(y, sy)
+            w_new = max(x + current_width, sx + sw) - x_new
+            h_new = max(y + current_height, sy + sh) - y_new
+
+            large.bbox = (x_new, y_new, w_new, h_new)
+            large.area = max(1, w_new * h_new)
+
+            x = x_new
+            y = y_new
+            current_width = w_new
+            current_height = h_new
+            cx_large = x + current_width / 2.0
+            cy_large = y + current_height / 2.0
+
+            merged_flags[j] = True
+
+        merged.append(large)
+
+    merged.sort(key=lambda blk: (blk.bbox[1], blk.bbox[0]))
+    return merged
 
 
 def save_block_images(
@@ -156,7 +243,6 @@ def segment_blocks(
             if aspect > adaptive_max_aspect:
                 continue
             filtered.append(blk)
-
         ratio_w = resize_state["ratio_w"]
         ratio_h = resize_state["ratio_h"]
         mapped_blocks: List[Block] = []
@@ -178,22 +264,27 @@ def segment_blocks(
                 )
             )
         blocks = mapped_blocks
-        return draw_blocks(image, blocks)
+        return draw_blocks(image, blocks, color_choice=1)
+
+    def cluster_annotated_filtered(img: np.ndarray) -> np.ndarray:
+        nonlocal blocks
+        blocks = merge_nearby_small_blocks(blocks)
+        return draw_blocks(img, blocks, color_choice=2)
 
     pipeline.add("resize", resize_step)
-    pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
+    pipeline.add("to_gray", to_gray)
+    pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
     pipeline.add("adaptive_threshold", adaptive_threshold)
+    pipeline.add("morph_open", lambda image: morph_open(image, (1, 1), 1))
+    pipeline.add("morph_close", lambda image: morph_close(image, (2, 2), 1))
     pipeline.add("enhance_lines", enhance_lines)
     pipeline.add("expand", expand)
     pipeline.add("cluster", cluster_annotated)
+    pipeline.add("cluster_filtered", cluster_annotated_filtered)
 
-    clustered_image = pipeline.run(image)
-    # save clustered image if output_dir is not None
-    if output_dir is not None:
-        clustered_image_path = output_dir / "clustered_image.png"
-        cv2.imwrite(str(clustered_image_path), clustered_image)
-        print(f"Saved clustered image to: {clustered_image_path}")
+    pipeline.run(image)
     return blocks
 
 
@@ -225,6 +316,12 @@ def extract_block_images(
 
     if isinstance(image, (str, Path)):
         image = cv2.imread(str(image))
+    if image is None:
+        return []
+
+    height, width = image.shape[:2]
+    if max(height, width) < 600:
+        return [image.copy()]
     cluster_dir = Path(output_dir, "cluster_image") if output_dir else None
     # Segment without persisting intermediate artifacts
     blocks = segment_blocks(image, cluster_dir)
@@ -242,11 +339,14 @@ def extract_block_images(
 
 
 def main() -> None:
-    img_path = Path("assets/19b2e788907a1a24436b.jpg")
-    # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
-    # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
+    # img_path = Path("assets/z7064219281543_b33d93d5cf3880d2f5f6bab3ed22eb89.jpg")
+    # img_path = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
+    # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
+    # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
+    # img_path = Path("assets/z7070871858185_d94ed70d5e13fd0ae4bbf39107e29819.jpg")
+    img_path = Path("assets/z7070874630840_d04d8f5aa9a4d5ff280a48471768c51d.jpg")
 
     output_dir = Path("outputs/cluster_image")
 
@@ -257,15 +357,8 @@ def main() -> None:
     if image is None:
         raise ValueError(f"Không đọc được ảnh: {img_path}")
 
-    block_images = extract_block_images(image)
+    block_images = extract_block_images(image, output_dir=output_dir)
     print(f"Đã tách {len(block_images)} block (extract_block_images)")
-
-    # Lưu thử từng block ra file để quan sát
-    sample_dir = output_dir / "blocks_from_main"
-    sample_dir.mkdir(parents=True, exist_ok=True)
-    for idx, block_img in enumerate(block_images):
-        cv2.imwrite(str(sample_dir / f"block_{idx:03d}.png"), block_img)
-    print(f"Đã lưu {len(block_images)} block vào {sample_dir}")
 
 
 if __name__ == "__main__":

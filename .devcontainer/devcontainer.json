@@ -1,0 +1,13 @@
+{
+  "name": "FastAPI + OpenCV",
+  "build": {
+    "dockerfile": "Dockerfile.dev",
+    "context": ".."
+  },
+  "forwardPorts": [8000],
+  "extensions": ["ms-python.python","ms-python.vscode-pylance", "ms-python.black-formatter", "ms-python.pylint"],
+   "mounts": [
+    "source=${workspaceFolder}/.vscode/settings.json,target=/root/.vscode-remote/data/Machine/settings.json,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "pip install --upgrade pip"
+}

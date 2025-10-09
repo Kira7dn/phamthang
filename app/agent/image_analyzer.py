@@ -1,10 +1,9 @@
-from __future__ import annotations
-
+import json
+import logging
+import os
+from pathlib import Path
 import shutil
 import sys
-import os
-import json
-from pathlib import Path
 from typing import List, Optional, Union
 
 import cv2
@@ -14,10 +13,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent, BinaryContent
 
-from panel_verifier import Block, Panel, AggregatedResult
-
 from utils.cluster_image import extract_block_images
 from utils.normalize_image import normalize_image
+from app.agent.panel_verifier import Block, Panel, AggregatedResult
+
+
+logger = logging.getLogger("app.agent.image_analyzer")
 
 
 class PanelsLLMResult(BaseModel):
@@ -62,7 +63,9 @@ def create_prompt() -> str:
             + The outermost dimension labels exactly as written.
             + If a panel has no width or height, refer from the same panel or return `0`.
         - `inner_heights`: 
-            + Must include **all values exactly as in the drawing** Preserve original exactly from top -> bottom (e.g. [100,450,450,100]).  
+            + Must include **all values exactly as in the drawing** Preserve original exactly from top -> bottom (e.g. [100,450,450,100]).
+            + If a panel has no inner height let it empty never refer from other panel. 
+            + Must not include any values that are not in the drawing.
         ### Constraints
         - Do **not** merge or omit any panels.
         - Keep numbers exactly as they appear (no unit conversion, no extra text).
@@ -90,15 +93,19 @@ class ImageAnalyzeAgent:
             message = "Thiếu biến môi trường GOOGLE_API_KEY cho Gemini API"
             print(message, file=sys.stderr)
             raise RuntimeError(message)
+        logger.info("GOOGLE_API_KEY detected, proceeding with analysis")
 
         # Đảm bảo thư mục output tồn tại nếu người dùng cung cấp
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Output directory prepared", extra={"output_dir": str(self.output_dir)})
         if isinstance(source_image, Path):
             source_image = cv2.imread(str(source_image))
+            logger.info("Loaded source image from path", extra={"path": str(source_image)})
 
         # 1) Tách block từ ảnh nguồn
         block_images = extract_block_images(source_image, output_dir=self.output_dir)
+        logger.info("Extracted block images", extra={"block_count": len(block_images)})
 
         # 2) Gọi agent phân tích cho từng block và gom kết quả
         aggregated = AggregatedResult(blocks=[])
@@ -107,11 +114,13 @@ class ImageAnalyzeAgent:
                 Path(self.output_dir, f"Block {str(idx)}") if self.output_dir else None
             )
             processed_image = load_image_bytes(image, block_dir)
+            logger.info("Running analysis agent for block", extra={"block_index": idx})
             agent_result = self.agent.run_sync([self.prompt, processed_image])
             if isinstance(agent_result.output, PanelsLLMResult):
                 panels_result = agent_result.output
             else:
                 panels_result = PanelsLLMResult.model_validate(agent_result.output)
+            logger.info("Analysis agent completed", extra={"block_index": idx, "panel_count": len(panels_result.panels)})
             aggregated.blocks.append(
                 Block(
                     block_no=str(idx),
@@ -131,6 +140,7 @@ class ImageAnalyzeAgent:
                 encoding="utf-8",
             )
             print(f"Đã lưu kết quả panels ban đầu: {result_path}")
+            logger.info("Saved initial panel analysis", extra={"result_path": str(result_path)})
         return aggregated
 
 

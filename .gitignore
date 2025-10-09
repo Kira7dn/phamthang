@@ -2,6 +2,7 @@ example/
 outputs/
 assets/
 models/
+deploy.sh
 
 # Logs
 logs/
