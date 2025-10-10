@@ -8,6 +8,7 @@ from utils.image_process import (
     ImagePipeline,
     adaptive_threshold,
     clahe,
+    add_white_padding,
     invert_background,
     morph_close,
     morph_open,
@@ -21,7 +22,10 @@ from utils.image_process import (
 def normalize_image(
     image: np.ndarray,
     output_path: Optional[Path] = None,
+    padding_pct: float = 0.05,
 ) -> np.ndarray:
+    if image is None or (hasattr(image, "size") and image.size == 0):
+        raise ValueError("normalize_image: input image is empty or None")
     pipeline = ImagePipeline(output_path)
 
     pipeline.add("resize", resize_with_limit)
@@ -43,6 +47,8 @@ def normalize_image(
     pipeline.add("remove_small_components", remove_small_components)
     pipeline.add("invert_background", invert_background)
     pipeline.add("clahe", clahe)
+    # Add white padding as a pipeline step so it is saved in stage outputs
+    pipeline.add("white_padding", lambda img: add_white_padding(img, padding_pct))
     output_image = pipeline.run(image)
     return output_image
 
@@ -51,7 +57,7 @@ if __name__ == "__main__":
     # img_path = Path("assets/z7064219281543_b33d93d5cf3880d2f5f6bab3ed22eb89.jpg")
     # img_path = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = Path("assets/00_origin.png")
-    img_path = Path("assets/block0s.png")
+    img_path = Path("assets/00_origin.png")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
     # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
@@ -62,5 +68,9 @@ if __name__ == "__main__":
     if output_dir.exists():
         shutil.rmtree(output_dir)
     image = cv2.imread(img_path)
+    if image is None:
+        raise FileNotFoundError(
+            f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
+        )
     normalized_image = normalize_image(image, output_dir)
     print("Normalized image saved to:", output_dir)

@@ -6,8 +6,7 @@ services:
     env_file:
       - .env
     environment:
-      - DEV_MODE=false
-      - IS_PRODUCTION=true
+      - IS_PRODUCTION=false
     ports:
       - "8001:8000"
     volumes:

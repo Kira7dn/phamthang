@@ -79,7 +79,8 @@ class ImageAnalyzeAgent:
     def __init__(
         self,
         output_dir: Optional[Path] = None,
-        detect_model_id: str = "google-gla:gemini-2.0-flash",
+        # detect_model_id: str = "google-gla:gemini-2.0-flash",
+        detect_model_id: str = "google-gla:gemini-2.5-flash",
     ) -> None:
         self.output_dir = output_dir
         self.detect_model_id = detect_model_id
@@ -98,10 +99,14 @@ class ImageAnalyzeAgent:
         # Đảm bảo thư mục output tồn tại nếu người dùng cung cấp
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            logger.info("Output directory prepared", extra={"output_dir": str(self.output_dir)})
+            logger.info(
+                "Output directory prepared", extra={"output_dir": str(self.output_dir)}
+            )
         if isinstance(source_image, Path):
             source_image = cv2.imread(str(source_image))
-            logger.info("Loaded source image from path", extra={"path": str(source_image)})
+            logger.info(
+                "Loaded source image from path", extra={"path": str(source_image)}
+            )
 
         # 1) Tách block từ ảnh nguồn
         block_images = extract_block_images(source_image, output_dir=self.output_dir)
@@ -120,7 +125,10 @@ class ImageAnalyzeAgent:
                 panels_result = agent_result.output
             else:
                 panels_result = PanelsLLMResult.model_validate(agent_result.output)
-            logger.info("Analysis agent completed", extra={"block_index": idx, "panel_count": len(panels_result.panels)})
+            logger.info(
+                "Analysis agent completed",
+                extra={"block_index": idx, "panel_count": len(panels_result.panels)},
+            )
             aggregated.blocks.append(
                 Block(
                     block_no=str(idx),
@@ -140,13 +148,19 @@ class ImageAnalyzeAgent:
                 encoding="utf-8",
             )
             print(f"Đã lưu kết quả panels ban đầu: {result_path}")
-            logger.info("Saved initial panel analysis", extra={"result_path": str(result_path)})
+            logger.info(
+                "Saved initial panel analysis", extra={"result_path": str(result_path)}
+            )
         return aggregated
 
 
 def main():
     load_dotenv()
-    image = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    image = Path("outputs/5d430f41d60b422a8385dcbc2e96c66f/Block 1/00_origin.png")
     output_dir = Path("outputs/panel_agent/analyzer")
     if output_dir.exists():
         shutil.rmtree(output_dir)

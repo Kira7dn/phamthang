@@ -432,6 +432,32 @@ def invert_background(img_input: np.ndarray) -> np.ndarray:
     return cv2.bitwise_not(img_input)
 
 
+def add_white_padding(img_input: np.ndarray, padding_pct: float = 0.02) -> np.ndarray:
+    """Add white padding around the image based on percentage of image size.
+
+    padding_pct is applied to width and height separately.
+    Example: 0.05 = 5% padding on each side.
+    """
+    if padding_pct is None or padding_pct <= 0:
+        return img_input
+
+    h, w = img_input.shape[:2]
+    pad_w = max(0, int(round(w * padding_pct)))
+    pad_h = max(0, int(round(h * padding_pct)))
+
+    if img_input.ndim == 2:
+        canvas = np.full((h + 2 * pad_h, w + 2 * pad_w), 255, dtype=img_input.dtype)
+        canvas[pad_h : pad_h + h, pad_w : pad_w + w] = img_input
+        return canvas
+
+    channels = img_input.shape[2]
+    canvas = np.full(
+        (h + 2 * pad_h, w + 2 * pad_w, channels), 255, dtype=img_input.dtype
+    )
+    canvas[pad_h : pad_h + h, pad_w : pad_w + w, :] = img_input
+    return canvas
+
+
 def bridge_horizontal(binary: np.ndarray) -> np.ndarray:
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     bridged = cv2.dilate(binary, kernel, iterations=1)

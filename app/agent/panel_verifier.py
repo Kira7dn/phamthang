@@ -65,10 +65,10 @@ def create_partial_fix_prompt() -> str:
        - If `inner_heights` is not empty:
          a. If |sum_h - outer_height| ≤ 0.01 * outer_height (≤1%), leave unchanged.  
          b. If 0 < (outer_height - sum_h) ≤ 0.6 * outer_height:
-            - Compute `missing_amount = outer_height - sum_h`.  
-            - Round to nearest integer.  
-            - Insert one new element equal to `missing_amount` (usually at the top or bottom, keeping realistic layout).  
-            - Ensure total ≈ `outer_height`.
+          - Compute `missing_amount = outer_height - sum_h`.  
+          - Round to nearest integer.  
+          - Insert one new element equal to `missing_amount`, prioritizing a placement that keeps the spacing sequence as symmetrical and realistic as possible (usually at the top or bottom).  
+          - Ensure total ≈ `outer_height`.
     4. Keep numeric formats consistent (integers if input integers).
     5. Output **valid JSON only**, no commentary or extra text.
     """
@@ -110,11 +110,9 @@ class PanelVerifyAgent:
         self.model_id = model_id
         self.output_dir = output_dir
         logger.info(
-            "Initializing PanelVerifyAgent",
-            extra={
-                "model_id": model_id,
-                "output_dir": str(output_dir) if output_dir else None,
-            },
+            "Initializing PanelVerifyAgent | model_id=%s | output_dir=%s",
+            model_id,
+            str(output_dir) if output_dir else "None",
         )
         self.partial_prompt = create_partial_fix_prompt()
         self.canonical_prompt = create_canonical_prompt()
@@ -141,16 +139,19 @@ class PanelVerifyAgent:
         if not self.output_dir:
             return
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Verification output directory prepared", extra={"output_dir": str(self.output_dir)})
+        logger.info(
+            "Verification output directory prepared | output_dir=%s",
+            str(self.output_dir),
+        )
 
     def _run_stage(
         self, agent: Agent, aggregated: AggregatedResult
     ) -> AggregatedResult:
-        logger.info("Running verification stage", extra={"agent": agent.model})
+        logger.info("Running verification stage | agent=%s", agent.model)
         aggregated_json = aggregated.model_dump()
         aggregated_json_str = json.dumps(aggregated_json, ensure_ascii=False)
         result = agent.run_sync(aggregated_json_str)
-        logger.info("Verification stage finished", extra={"agent": agent.model})
+        logger.info("Verification stage finished | agent=%s", agent.model)
         if isinstance(result.output, AggregatedResult):
             return result.output
         return AggregatedResult.model_validate(result.output)
@@ -164,7 +165,10 @@ class PanelVerifyAgent:
             encoding="utf-8",
         )
         print(f"Đã lưu dữ liệu ({filename}): {stage_path}")
-        logger.info("Saved verification stage result", extra={"stage_file": str(stage_path)})
+        logger.info(
+            "Saved verification stage result | stage_file=%s",
+            str(stage_path),
+        )
 
     def run(self, aggregated: AggregatedResult) -> AggregatedResult:
         self._ensure_api_key()

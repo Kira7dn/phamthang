@@ -8,8 +8,9 @@ from typing import Optional, Union
 from dotenv import load_dotenv
 import numpy as np
 
+from app.agent.item_builder import BuildItemAgent, BuildItemOutput
 from app.agent.image_analyzer import ImageAnalyzeAgent
-from app.agent.panel_verifier import AggregatedResult, PanelVerifyAgent
+from app.agent.panel_verifier import PanelVerifyAgent
 
 
 logger = logging.getLogger("app.pipeline")
@@ -18,18 +19,17 @@ logger = logging.getLogger("app.pipeline")
 class ExtractPanelPipeline:
     def __init__(
         self,
-        analyze_model_id: str = "google-gla:gemini-2.0-flash",
+        analyze_model_id: str = "google-gla:gemini-2.5-flash",
         verify_model_id: str = "openai:o4-mini",
         output_dir: Optional[Path] = None,
     ) -> None:
         self.output_dir = output_dir
+        output_dir_str = str(output_dir) if output_dir else "None"
         logger.info(
-            "Initializing ExtractPanelPipeline",
-            extra={
-                "output_dir": str(output_dir) if output_dir else None,
-                "analyze_model_id": analyze_model_id,
-                "verify_model_id": verify_model_id,
-            },
+            "Initializing ExtractPanelPipeline | output_dir=%s | analyze_model_id=%s | verify_model_id=%s",
+            output_dir_str,
+            analyze_model_id,
+            verify_model_id,
         )
         self.analyze_agent = ImageAnalyzeAgent(
             output_dir=output_dir, detect_model_id=analyze_model_id
@@ -37,17 +37,27 @@ class ExtractPanelPipeline:
         self.verify_agent = PanelVerifyAgent(
             output_dir=output_dir, model_id=verify_model_id
         )
+        self.item_agent = BuildItemAgent(
+            output_dir=output_dir,
+            model_id=verify_model_id,
+        )
 
-    def run(self, image: Union[np.ndarray, Path]) -> AggregatedResult:
+    def run(self, image: Union[np.ndarray, Path]) -> BuildItemOutput:
+        image_path_str = str(image) if isinstance(image, Path) else "numpy"
         logger.info(
-            "Pipeline run started",
-            extra={"image_path": str(image) if isinstance(image, Path) else "numpy"},
+            "Pipeline run started | image_path=%s",
+            image_path_str,
         )
         image_analyze = self.analyze_agent.run(image)
         logger.info("Image analysis stage completed")
         verify_result = self.verify_agent.run(image_analyze)
         logger.info("Verification stage completed")
-        return verify_result
+        items_result = self.item_agent.run(verify_result)
+        logger.info(
+            "Bill of materials built | item_count=%s",
+            len(items_result.material_list),
+        )
+        return items_result
 
 
 def main() -> None:

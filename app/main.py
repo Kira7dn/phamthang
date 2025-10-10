@@ -20,7 +20,7 @@ from app.pipeline import ExtractPanelPipeline
 
 
 log_format = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-data_dir = Path("data")
+data_dir = Path("outputs")
 data_dir.mkdir(parents=True, exist_ok=True)
 
 log_handlers = [
@@ -33,7 +33,12 @@ log_handlers = [
     ),
 ]
 
-logging.basicConfig(level=logging.INFO, format=log_format, handlers=log_handlers)
+logging.basicConfig(
+    level=logging.INFO,
+    format=log_format,
+    handlers=log_handlers,
+    force=True,
+)
 logger = logging.getLogger("app.main")
 
 load_dotenv()
@@ -59,22 +64,21 @@ async def extract_panel(
     file: UploadFile | None = File(default=None),
     image_url: HttpUrl | None = Query(default=None),
 ) -> JSONResponse:
+    has_file = file is not None
+    has_image_url = image_url is not None
+    image_url_display = str(image_url) if image_url else "None"
     logger.info(
-        "/extract called",
-        extra={
-            "has_file": file is not None,
-            "image_url": str(image_url) if image_url else None,
-        },
+        "/extract called | has_file=%s | image_url=%s",
+        has_file,
+        image_url_display,
     )
     if (file is None and image_url is None) or (
         file is not None and image_url is not None
     ):
         logger.warning(
-            "Invalid input combination for /extract",
-            extra={
-                "has_file": file is not None,
-                "has_image_url": image_url is not None,
-            },
+            "Invalid input combination for /extract | has_file=%s | has_image_url=%s",
+            has_file,
+            has_image_url,
         )
         raise HTTPException(
             status_code=400,
@@ -88,29 +92,33 @@ async def extract_panel(
         content = await file.read()
         if not content:
             logger.error(
-                "Uploaded file is empty",
-                extra={"uploaded_filename": file.filename},
+                "Uploaded file is empty | uploaded_filename=%s",
+                file.filename,
             )
             raise HTTPException(status_code=400, detail="Tệp đầu vào rỗng")
         suffix = Path(file.filename).suffix or ".png"
         await file.close()
         logger.info(
-            "Received file upload",
-            extra={"uploaded_filename": file.filename, "suffix": suffix},
+            "Received file upload | uploaded_filename=%s | suffix=%s",
+            file.filename,
+            suffix,
         )
     else:
         assert image_url is not None
+        image_url_str = str(image_url)
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
                 logger.info(
-                    "Downloading image from URL", extra={"image_url": str(image_url)}
+                    "Downloading image from URL | image_url=%s",
+                    image_url_str,
                 )
-                response = await client.get(str(image_url))
+                response = await client.get(image_url_str)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error(
-                "Failed to download image",
-                extra={"image_url": str(image_url), "error": str(exc)},
+                "Failed to download image | image_url=%s | error=%s",
+                image_url_str,
+                str(exc),
             )
             raise HTTPException(
                 status_code=400,
@@ -120,21 +128,23 @@ async def extract_panel(
         content = response.content
         if not content:
             logger.error(
-                "Downloaded content is empty", extra={"image_url": str(image_url)}
+                "Downloaded content is empty | image_url=%s",
+                image_url_str,
             )
             raise HTTPException(status_code=400, detail="Nội dung ảnh từ URL rỗng")
 
-        parsed_url = urlparse(str(image_url))
+        parsed_url = urlparse(image_url_str)
         suffix = Path(parsed_url.path).suffix or ".png"
         logger.info(
-            "Downloaded image successfully",
-            extra={"image_url": str(image_url), "suffix": suffix},
+            "Downloaded image successfully | image_url=%s | suffix=%s",
+            image_url_str,
+            suffix,
         )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_file.write(content)
         tmp_path = Path(tmp_file.name)
-    logger.info("Created temporary input file", extra={"tmp_path": str(tmp_path)})
+    logger.info("Created temporary input file | tmp_path=%s", str(tmp_path))
 
     output_base = _get_outputs_base_dir()
     output_dir = None
@@ -142,34 +152,30 @@ async def extract_panel(
         output_dir = output_base / uuid.uuid4().hex
         output_dir.mkdir(parents=True, exist_ok=False)
         logger.info(
-            f"Using output directory: {str(output_dir)}",
-            extra={
-                "output_dir": str(output_dir),
-                "output_dir_absolute": str(output_dir.resolve()),
-            },
+            "Using output directory | output_dir=%s | output_dir_absolute=%s",
+            str(output_dir),
+            str(output_dir.resolve()),
         )
 
     try:
         pipeline = ExtractPanelPipeline(output_dir=output_dir)
+        output_dir_display = str(output_dir) if output_dir else "None"
         logger.info(
-            "Starting pipeline execution",
-            extra={"output_dir": str(output_dir) if output_dir else None},
+            "Starting pipeline execution | output_dir=%s",
+            output_dir_display,
         )
         result = await asyncio.to_thread(pipeline.run, tmp_path)
         logger.info(
-            "Pipeline execution completed",
-            extra={"output_dir": str(output_dir) if output_dir else None},
+            "Pipeline execution completed | output_dir=%s",
+            output_dir_display,
         )
         payload = result.model_dump()
         return JSONResponse(content=payload)
     except RuntimeError as exc:
         logger.exception("Pipeline execution failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         tmp_path.unlink(missing_ok=True)
-        logger.info(
-            "Cleaned up temporary input file", extra={"tmp_path": str(tmp_path)}
-        )
+        logger.info("Cleaned up temporary input file | tmp_path=%s", str(tmp_path))
 
 
 @app.delete("/outputs")
