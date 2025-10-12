@@ -1,430 +1,765 @@
+"""
+Frame Detection Module - Simplified approach to detect aluminum frames.
+
+Strategy:
+1. Use Canny edge detection
+2. Apply Hough Lines to find frame edges
+3. Detect closed rectangles using contours on morphologically processed edges
+4. Combine results for accurate frame dimensions
+"""
+
 from pathlib import Path
-import math
 import shutil
-from itertools import combinations
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 from utils.normalize_image import normalize_image
-from utils.image_process import (
-    ImagePipeline,
-    clahe,
-    enhance_lines,
-    invert_background,
-    morph_close,
-    morph_open,
-    normalize_bg,
-    resize_with_limit,
-    to_gray,
-)
+from utils.image_process import ImagePipeline, save_stage_image
 
 
-def _resize_for_detection(
-    image: np.ndarray, max_dim: int = 1600
-) -> Tuple[np.ndarray, float]:
-    h, w = image.shape[:2]
-    scale = 1.0
-    if max(h, w) > max_dim:
-        scale = max_dim / float(max(h, w))
-        image = cv2.resize(
-            image,
-            (int(round(w * scale)), int(round(h * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
-    return image, scale
-
-
-def _adaptive_close(gray: np.ndarray) -> np.ndarray:
-    h, w = gray.shape
-    k = max(3, int(round(min(h, w) / 80)))
-    if k % 2 == 0:
-        k += 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
-    return cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-
-def _draw_rectangles(
+def draw_rectangles(
     image: np.ndarray,
-    rects: Sequence[Dict[str, Any]],
+    rects: List[Dict[str, Any]],
     color: Tuple[int, int, int] = (0, 255, 0),
-    center_color: Tuple[int, int, int] = (0, 0, 255),
     thickness: int = 2,
 ) -> np.ndarray:
+    """Draw rectangles on image with labels."""
     annotated = image.copy()
-    img_h, img_w = annotated.shape[:2]
-    for rect in rects:
-        corners = rect.get("corners")
-        if corners is None:
-            x, y = rect.get("x"), rect.get("y")
-            w, h = rect.get("w"), rect.get("h")
-            if None in (x, y, w, h):
-                continue
-            corners = [
-                (int(x), int(y)),
-                (int(x + w), int(y)),
-                (int(x + w), int(y + h)),
-                (int(x), int(y + h)),
-            ]
-        pts = np.array(corners, dtype=np.float32)
-        pts_int = np.array(pts, dtype=np.int32)
-        if pts_int.size == 0:
-            continue
-        cv2.polylines(annotated, [pts_int], True, color, thickness)
-        center = rect.get("center")
-        if center is None:
-            x_vals = pts[:, 0]
-            y_vals = pts[:, 1]
-            center = (float(np.mean(x_vals)), float(np.mean(y_vals)))
-        if center:
-            cv2.circle(
-                annotated,
-                (int(round(center[0])), int(round(center[1]))),
-                3,
-                center_color,
-                -1,
-            )
-        label = rect.get("label")
-        if label is not None:
-            x_min = int(np.min(pts_int[:, 0]))
-            y_min = int(np.min(pts_int[:, 1]))
-            text_x = min(max(x_min, 0), img_w - 1)
-            text_y = min(max(y_min + 20, 20), img_h - 5)
-            cv2.putText(
-                annotated,
-                str(label),
-                (text_x, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 0, 255),
-                2,
-                cv2.LINE_AA,
-            )
+    if annotated.ndim == 2:
+        annotated = cv2.cvtColor(annotated, cv2.COLOR_GRAY2BGR)
+
+    for i, rect in enumerate(rects):
+        x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
+        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, thickness)
+
+        # Draw label
+        label = f"Frame {i+1}: {w}x{h}"
+        cv2.putText(
+            annotated,
+            label,
+            (x, max(y - 10, 20)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            1,
+            cv2.LINE_AA,
+        )
     return annotated
 
 
-def detect_by_hough(
-    image: np.ndarray, min_area: float = 1000, merge_thresh: int = 10
-) -> Tuple[List[Dict[str, Any]], np.ndarray]:
-    """
-    Phát hiện hình chữ nhật thẳng hàng (vuông góc, xếp chồng hoặc cạnh nhau)
-    bằng cách dò các line ngang/dọc và ghép thành hộp.
-    """
+def to_grayscale(image: np.ndarray) -> np.ndarray:
+    """Convert to grayscale."""
     if image.ndim == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        vis = image.copy()
-    else:
-        gray = image
-        vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return image.copy()
 
-    edges = cv2.Canny(gray, 50, 150)
+
+def apply_otsu_threshold(gray: np.ndarray) -> np.ndarray:
+    """Apply OTSU threshold."""
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    return binary
+
+
+def remove_text_regions(binary: np.ndarray) -> np.ndarray:
+    """Remove text/number regions (dimension annotations) before line detection.
+
+    Strategy:
+    - Remove margin regions (dimension annotations are typically outside main area)
+    - Detect and remove small dense components (text)
+    - Use morphology to clean up
+    """
+    h, w = binary.shape
+    cleaned = binary.copy()
+
+    # Step 1: Remove outer margin regions (where dimension text/arrows typically are)
+    # Find the main content area by detecting largest solid regions
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
+
+    # Find contours to locate main content
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        # Find bounding box of all main contours
+        all_points = np.vstack(contours)
+        x_min, y_min = all_points.min(axis=0)[0]
+        x_max, y_max = all_points.max(axis=0)[0]
+
+        # Add larger margin to remove dimension text that's close to edges
+        margin = 50  # Increased to catch text near edges
+        x_min = max(0, x_min - margin)
+        y_min = max(0, y_min - margin)
+        x_max = min(w, x_max + margin)
+        y_max = min(h, y_max + margin)
+
+        # Clear regions outside main area (including dimension text)
+        cleaned[:y_min, :] = 0  # Top margin
+        cleaned[y_max:, :] = 0  # Bottom margin
+        cleaned[:, :x_min] = 0  # Left margin
+        cleaned[:, x_max:] = 0  # Right margin
+
+        # ADAPTIVE border removal: only clear inner border if content is far from edge
+        # This prevents removing frame edges in tight layouts
+        content_width = x_max - x_min
+        content_height = y_max - y_min
+
+        # Only apply border removal if main content doesn't fill most of the image
+        # (i.e., there's room for dimension annotations)
+        if content_width < w * 0.9 and content_height < h * 0.9:
+            # Calculate safe border width (don't exceed 5% of content size)
+            safe_border = min(50, int(min(content_width, content_height) * 0.05))
+
+            # Right edge - only if there's enough space
+            if x_max - safe_border > x_min + 50:  # Keep at least 50px of content
+                cleaned[:, max(x_min, x_max - safe_border) : x_max] = 0
+            # Left edge - only if there's enough space
+            if x_min + safe_border < x_max - 50:  # Keep at least 50px of content
+                cleaned[:, x_min : min(x_max, x_min + safe_border)] = 0
+
+    # Step 2: Remove small isolated text components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        cleaned, connectivity=8
+    )
+
+    for i in range(1, num_labels):
+        x, y, w_comp, h_comp, area = stats[i]
+
+        # Remove small compact regions (likely text)
+        is_small = w_comp < 120 and h_comp < 120
+        is_compact = area < 10000
+
+        if is_small and is_compact:
+            cleaned[labels == i] = 0
+
+    return cleaned
+
+
+def connect_broken_lines(binary: np.ndarray) -> np.ndarray:
+    """Connect broken lines by detecting and extending line segments.
+
+    Strategy:
+    - Use Hough Lines to detect all line segments
+    - Group nearby collinear segments
+    - Extend and connect segments in the same group
+    - Redraw connected lines
+    """
+    h, w = binary.shape
+
+    # Detect edges
+    edges = cv2.Canny(binary, 30, 100, apertureSize=3)
+
+    # Detect line segments with relaxed parameters to catch broken pieces
     lines = cv2.HoughLinesP(
-        edges, 1, np.pi / 180, threshold=120, minLineLength=50, maxLineGap=5
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=20,  # Lower to detect weak segments
+        minLineLength=15,  # Shorter to catch small pieces
+        maxLineGap=30,  # Allow gaps
     )
+
     if lines is None:
-        return [], cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        return binary
 
-    lines = lines.reshape(-1, 4)
-    h_lines, v_lines = [], []
+    # Separate horizontal and vertical lines
+    h_segments = []
+    v_segments = []
 
-    for x1, y1, x2, y2 in lines:
-        angle = abs(math.degrees(math.atan2(y2 - y1, x2 - x1)))
-        if angle < 10 or angle > 170:
-            h_lines.append((min(y1, y2), min(x1, x2), max(x1, x2)))  # y, x_start, x_end
-        elif 80 < angle < 100:
-            v_lines.append((min(x1, x2), min(y1, y2), max(y1, y2)))  # x, y_start, y_end
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
 
-    # Gom nhóm các đường gần nhau
-    def merge_lines(lines, axis_idx=0):
-        lines.sort(key=lambda x: x[axis_idx])
-        merged = []
-        for l in lines:
-            if not merged or abs(l[axis_idx] - merged[-1][axis_idx]) > merge_thresh:
-                merged.append(l)
-        return merged
+        if angle < 15 or angle > 165:  # Horizontal
+            h_segments.append((min(x1, x2), y1, max(x1, x2), y2))
+        elif 75 < angle < 105:  # Vertical
+            v_segments.append((x1, min(y1, y2), x2, max(y1, y2)))
 
-    h_lines = merge_lines(h_lines, 0)
-    v_lines = merge_lines(v_lines, 0)
+    # Connect nearby collinear segments
+    def connect_horizontal_segments(segments, gap_tolerance=30, y_tolerance=5):
+        """Connect horizontal segments that are on the same line."""
+        if not segments:
+            return []
 
-    rects = []
-    for i, (x1, _, _) in enumerate(v_lines):
-        for x2, _, _ in v_lines[i + 1 :]:
-            if abs(x2 - x1) < 10:  # quá gần, bỏ qua
-                continue
+        # Sort by y, then x
+        segments = sorted(segments, key=lambda s: (s[1], s[0]))
+        connected = []
 
-            for k, (y1, _, _) in enumerate(h_lines):
-                for y2, _, _ in h_lines[k + 1 :]:
-                    if abs(y2 - y1) < 10:
-                        continue
+        for seg in segments:
+            x1, y1, x2, y2 = seg
+            merged = False
 
-                    w, h = abs(x2 - x1), abs(y2 - y1)
-                    area = w * h
-                    if area < min_area:
-                        continue
+            for i, conn in enumerate(connected):
+                cx1, cy1, cx2, cy2 = conn
 
-                    rects.append(
-                        {
-                            "x": int(min(x1, x2)),
-                            "y": int(min(y1, y2)),
-                            "width": int(w),
-                            "height": int(h),
-                            "area": float(area),
-                        }
-                    )
+                # Check if on same horizontal line (y-coordinate similar)
+                if abs(y1 - cy1) <= y_tolerance:
+                    # Check if segments are close enough to connect
+                    if cx1 - gap_tolerance <= x1 <= cx2 + gap_tolerance:
+                        # Extend the connected segment
+                        connected[i] = (min(cx1, x1), cy1, max(cx2, x2), cy2)
+                        merged = True
+                        break
 
-    # Vẽ để debug
-    for r in rects:
-        cv2.rectangle(
-            vis,
-            (r["x"], r["y"]),
-            (r["x"] + r["width"], r["y"] + r["height"]),
-            (0, 255, 0),
-            2,
-        )
+            if not merged:
+                connected.append(seg)
 
-    return rects, vis
+        return connected
 
+    def connect_vertical_segments(segments, gap_tolerance=30, x_tolerance=5):
+        """Connect vertical segments that are on the same line."""
+        if not segments:
+            return []
 
-def is_closed_rect(cnt):
-    area = cv2.contourArea(cnt)
-    peri = cv2.arcLength(cnt, True)
-    if peri == 0 or area == 0:
-        return False
-    circularity = 4 * np.pi * area / (peri * peri)
-    return circularity > 0.4  # đủ kín (có thể chỉnh 0.4–0.6 tùy ảnh)
+        # Sort by x, then y
+        segments = sorted(segments, key=lambda s: (s[0], s[1]))
+        connected = []
 
+        for seg in segments:
+            x1, y1, x2, y2 = seg
+            merged = False
 
-def _extract_rect_from_contour(
-    cnt: np.ndarray,
-    min_area: float,
-    min_fill_ratio: float = 0.8,
-    max_aspect: float = 10.0,
-    min_circularity: float = 0.0004,
-) -> Optional[Dict[str, Any]]:
-    area = cv2.contourArea(cnt)
-    if area < min_area:
-        return None
+            for i, conn in enumerate(connected):
+                cx1, cy1, cx2, cy2 = conn
 
-    approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
-    if len(approx) != 4:
-        return None
+                # Check if on same vertical line (x-coordinate similar)
+                if abs(x1 - cx1) <= x_tolerance:
+                    # Check if segments are close enough to connect
+                    if cy1 - gap_tolerance <= y1 <= cy2 + gap_tolerance:
+                        # Extend the connected segment
+                        connected[i] = (cx1, min(cy1, y1), cx2, max(cy2, y2))
+                        merged = True
+                        break
 
-    x, y, w, h = cv2.boundingRect(approx)
-    rect_area = w * h
-    if rect_area == 0 or area / rect_area < min_fill_ratio:
-        return None
+            if not merged:
+                connected.append(seg)
 
-    aspect = max(w, h) / max(1, min(w, h))
-    if aspect > max_aspect:
-        return None
+        return connected
 
-    peri = cv2.arcLength(cnt, True)
-    if peri == 0:
-        return None
-    circularity = 4 * np.pi * area / (peri * peri)
-    if circularity < min_circularity:
-        return None
+    # Connect segments multiple times for better coverage
+    for _ in range(3):
+        h_segments = connect_horizontal_segments(h_segments)
+        v_segments = connect_vertical_segments(v_segments)
 
-    return {
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "area": float(area),
-        "aspect": float(aspect),
-    }
+    # Create new image with connected lines
+    connected = np.zeros_like(binary)
+
+    # Draw connected horizontal lines
+    for x1, y1, x2, y2 in h_segments:
+        cv2.line(connected, (x1, y1), (x2, y2), 255, 2)
+
+    # Draw connected vertical lines
+    for x1, y1, x2, y2 in v_segments:
+        cv2.line(connected, (x1, y1), (x2, y2), 255, 2)
+
+    # Slight thickening to ensure continuity
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    connected = cv2.dilate(connected, kernel, iterations=1)
+
+    return connected
 
 
-def _filter_and_dedup_rects(
-    rects: List[Dict[str, Any]],
-    img_w: int,
-    img_h: int,
-    margin: int = 25,
-    max_ratio: float = 0.92,
-    area_ratio_threshold: float = 1.02,
-    duplicate_pos_tol: int = 5,
-    duplicate_size_tol: float = 0.05,
+def remove_diagonal_lines(binary: np.ndarray) -> np.ndarray:
+    """Remove diagonal lines (dimension annotations) by keeping only horizontal/vertical structures.
+
+    Strategy:
+    - Use Hough Lines to detect and classify lines by angle
+    - Keep only lines that are nearly horizontal (angle < 10°) or vertical (80° < angle < 100°)
+    - Reconstruct image from filtered lines with thicker lines to prevent gaps
+    """
+    h, w = binary.shape
+
+    # Detect all lines using Hough
+    edges = cv2.Canny(binary, 30, 100, apertureSize=3)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=30,
+        minLineLength=20,
+        maxLineGap=10,
+    )
+
+    # Create new image with only horizontal and vertical lines
+    # cleaned = np.zeros_like(binary)
+    cleaned = binary.copy()
+
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+
+            # Calculate angle
+            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
+
+            def is_axis_aligned(angle):
+                return angle < 15 or angle > 165 or (75 < angle < 105)
+
+            # Remove only diagonal lines by painting them black
+            if not is_axis_aligned(angle):
+                cv2.line(cleaned, (x1, y1), (x2, y2), 0, 4)
+    return cleaned
+
+
+def reconnect_broken_frames(binary: np.ndarray) -> np.ndarray:
+    """Aggressively reconnect broken frame edges after diagonal removal.
+
+    This is stronger than connect_broken_lines and specifically targets
+    gaps created by diagonal line removal.
+    """
+    h, w = binary.shape
+
+    # Step 1: Close horizontal gaps with horizontal kernel
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
+    horizontal_closed = cv2.morphologyEx(
+        binary, cv2.MORPH_CLOSE, h_kernel, iterations=1
+    )
+
+    # Step 2: Close vertical gaps with vertical kernel
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+    vertical_closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, v_kernel, iterations=1)
+
+    # Step 3: Combine both
+    combined = cv2.bitwise_or(horizontal_closed, vertical_closed)
+
+    # Step 4: Close remaining small gaps with square kernel
+    kernel_square = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    reconnected = cv2.morphologyEx(
+        combined, cv2.MORPH_CLOSE, kernel_square, iterations=3
+    )
+
+    # Step 5: Dilate to make lines thicker and more continuous
+    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    reconnected = cv2.dilate(reconnected, kernel_dilate, iterations=2)
+
+    return reconnected
+
+
+def detect_frames_by_contours(
+    cleaned_binary: np.ndarray,
+    min_area_ratio: float = 0.0001,
+    max_aspect: float = 20.0,
+    min_fill_ratio: float = 0.2,
 ) -> List[Dict[str, Any]]:
-    if len(rects) <= 1:
-        return rects
+    """Detect frame rectangles using contours.
 
-    def _contains(outer: Dict[str, Any], inner: Dict[str, Any]) -> bool:
-        return (
-            outer["x"] <= inner["x"] + margin
-            and outer["y"] <= inner["y"] + margin
-            and outer["x"] + outer["w"] >= inner["x"] + inner["w"] - margin
-            and outer["y"] + outer["h"] >= inner["y"] + inner["h"] - margin
+    Strategy: Use bounding rectangles instead of contour area to avoid
+    issues with internal annotations (dimension lines, diagonal lines, etc.)
+    Uses hierarchy to filter out parent contours that only serve as boundaries.
+    """
+    h, w = cleaned_binary.shape
+    min_area = h * w * min_area_ratio
+
+    # Find all contours with hierarchy
+    # Hierarchy format: [Next, Previous, First_Child, Parent]
+    contours, hierarchy = cv2.findContours(
+        cleaned_binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    )
+    print(f"Found {len(contours)} total contours (image: {w}x{h}, min_area: {min_area}")
+
+    # Get all contour areas for debugging
+    all_areas = [cv2.contourArea(cnt) for cnt in contours]
+    all_areas.sort(reverse=True)
+    if all_areas:
+        print(f"  Top 5 contour areas: {all_areas[:5]}")
+        print(f"  Area range: {all_areas[0]:.0f} -> {all_areas[-1]:.0f}")
+
+    frames = []
+    filtered_stats = {
+        "too_small": 0,
+        "bad_aspect": 0,
+        "bad_fill": 0,
+        "parent_boundary": 0,
+    }
+    debug_info = []
+
+    # Flatten hierarchy for easier access
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]
+
+    for idx, cnt in enumerate(contours):
+        # CRITICAL: Filter out parent contours that are just outer boundaries
+        # Check if this contour has children (First_Child != -1)
+        if hierarchy is not None and hierarchy[idx][2] != -1:
+            # This contour has children - check if it's just an outer boundary
+            # Get all children
+            child_idx = hierarchy[idx][2]
+            num_children = 0
+            while child_idx != -1:
+                num_children += 1
+                child_idx = hierarchy[child_idx][0]  # Next sibling
+
+            # If this contour has multiple children (2+), it's likely an outer boundary
+            # NOT an actual frame
+            if num_children >= 2:
+                filtered_stats["parent_boundary"] += 1
+                x, y, rect_w, rect_h = cv2.boundingRect(cnt)
+                debug_info.append(
+                    f"  Filtered (parent boundary with {num_children} children): bbox={rect_w}x{rect_h}"
+                )
+                continue
+        # Get bounding rectangle FIRST
+        x, y, rect_w, rect_h = cv2.boundingRect(cnt)
+        bbox_area = rect_w * rect_h
+
+        # Use BBOX area for filtering, not contour area
+        if bbox_area < min_area:
+            filtered_stats["too_small"] += 1
+            continue
+
+        # Filter out very small frames
+        # Use BOTH percentage (for large images) AND absolute size (for small images)
+        image_area = w * h
+        min_frame_area = max(
+            image_area * 0.02,  # At least 2% of image
+            20000,  # OR at least 20,000 pixels (e.g., 100x200)
         )
 
-    working = rects[:]
-    max_idx = max(range(len(working)), key=lambda i: working[i]["area"])
-    candidate = working[max_idx]
-    if all(
-        _contains(candidate, working[idx])
-        for idx in range(len(working))
-        if idx != max_idx
-    ):
-        working.pop(max_idx)
-
-    filtered: List[Dict[str, Any]] = []
-    for idx, rect in enumerate(working):
-        h_ratio = rect["h"] / float(max(1, img_h))
-        w_ratio = rect["w"] / float(max(1, img_w))
-        if h_ratio > max_ratio or w_ratio > max_ratio:
+        if bbox_area < min_frame_area:
+            filtered_stats["too_small"] += 1
+            debug_info.append(
+                f"  Filtered (too small): bbox={rect_w}x{rect_h}, area={bbox_area:.0f} < {min_frame_area:.0f}"
+            )
             continue
-        contains_inner = any(
-            _contains(rect, working[j])
-            and rect["area"] >= working[j]["area"] * area_ratio_threshold
-            for j in range(len(working))
-            if j != idx
+
+        # Filter out frames that are too large (> 90% of image in BOTH dimensions)
+        # Allow frames that are tall or wide, just not both
+        if rect_w > w * 0.9 and rect_h > h * 0.9:
+            filtered_stats["bad_aspect"] += 1
+            debug_info.append(f"  Filtered (too large): bbox={rect_w}x{rect_h}")
+            continue
+
+        # Filter out very thin frames (likely noise or dimension lines)
+        if rect_w < 40 or rect_h < 40:
+            filtered_stats["bad_aspect"] += 1
+            debug_info.append(f"  Filtered (too thin): bbox={rect_w}x{rect_h}")
+            continue
+
+        # Filter by aspect ratio (not too elongated)
+        aspect = max(rect_w, rect_h) / max(1, min(rect_w, rect_h))
+        if aspect > max_aspect:
+            filtered_stats["bad_aspect"] += 1
+            debug_info.append(
+                f"  Filtered (aspect={aspect:.1f}): bbox={rect_w}x{rect_h}"
+            )
+            continue
+
+        # CRITICAL: Validate that contour is actually closed (not just 3 sides)
+        # Check fill_ratio to ensure this is a real frame, not open edges
+        contour_area = cv2.contourArea(cnt)
+        fill_ratio = contour_area / bbox_area if bbox_area > 0 else 0
+
+        # For valid closed frames, fill_ratio should be significant
+        # Open contours (3 sides, L-shape) will have low fill_ratio
+        if fill_ratio < 0.3:  # Less than 30% filled = open contour
+            filtered_stats["bad_fill"] += 1
+            debug_info.append(
+                f"  Filtered (open contour): bbox={rect_w}x{rect_h}, fill_ratio={fill_ratio:.2f}"
+            )
+            continue
+
+        frames.append(
+            {
+                "x": x,
+                "y": y,
+                "w": rect_w,
+                "h": rect_h,
+                "area": float(bbox_area),  # Use bbox area
+                "aspect": float(aspect),
+                "fill_ratio": float(fill_ratio),
+            }
         )
-        if contains_inner:
-            continue
-        filtered.append(rect)
 
-    if filtered:
-        working = filtered
+    print(
+        f"  Filtered: {filtered_stats['too_small']} too small, "
+        f"{filtered_stats['bad_aspect']} bad aspect, "
+        f"{filtered_stats['bad_fill']} bad fill ratio, "
+        f"{filtered_stats['parent_boundary']} parent boundaries"
+    )
 
-    if len(working) <= 1:
-        return working
+    if debug_info:
+        print("  Debug - Top filtered contours:")
+        for info in debug_info[:5]:
+            print(info)
 
-    working.sort(key=lambda r: r["area"], reverse=True)
-    deduped: List[Dict[str, Any]] = []
-    for rect in working:
-        is_duplicate = False
-        for kept in deduped:
+    # Sort by area (largest first)
+    frames.sort(key=lambda r: r["area"], reverse=True)
+    return frames
+
+
+def extract_edges_from_frames(
+    frames: List[Dict[str, Any]], image_shape: Tuple[int, int]
+) -> Tuple[Tuple[List, List], np.ndarray]:
+    """Extract 4 edges from each validated frame.
+
+    This function only processes frames that have already been validated
+    in detect_frames_by_contours, avoiding re-detection and filtering.
+    """
+    h, w = image_shape
+    line_image = np.zeros((h, w), dtype=np.uint8)
+    horizontal_lines = []
+    vertical_lines = []
+
+    # Extract edges from each validated frame
+    for frame in frames:
+        x, y, rect_w, rect_h = frame["x"], frame["y"], frame["w"], frame["h"]
+
+        # Extract 4 edges of the rectangle as lines
+        # Top edge (horizontal)
+        horizontal_lines.append((x, y, x + rect_w, y))
+        # Bottom edge (horizontal)
+        horizontal_lines.append((x, y + rect_h, x + rect_w, y + rect_h))
+        # Left edge (vertical)
+        vertical_lines.append((x, y, x, y + rect_h))
+        # Right edge (vertical)
+        vertical_lines.append((x + rect_w, y, x + rect_w, y + rect_h))
+
+        # Draw edges on line image
+        cv2.line(line_image, (x, y), (x + rect_w, y), 255, 2)  # Top
+        cv2.line(
+            line_image, (x, y + rect_h), (x + rect_w, y + rect_h), 255, 2
+        )  # Bottom
+        cv2.line(line_image, (x, y), (x, y + rect_h), 255, 2)  # Left
+        cv2.line(line_image, (x + rect_w, y), (x + rect_w, y + rect_h), 255, 2)  # Right
+
+    print(
+        f"Detected {len(horizontal_lines)} horizontal and {len(vertical_lines)} vertical lines"
+    )
+
+    return (horizontal_lines, vertical_lines), line_image
+
+
+def extract_frame_dimensions(
+    frames: List[Dict[str, Any]], lines: Tuple[List, List]
+) -> List[Dict[str, Any]]:
+    """Extract precise dimensions from frames using detected lines and filter invalid frames."""
+    h_lines, v_lines = lines
+
+    enhanced_frames = []
+    for frame in frames:
+        x, y, w, h = frame["x"], frame["y"], frame["w"], frame["h"]
+
+        # Find lines within frame bounds (with margin)
+        margin = 20
+        frame_h_lines = []
+        frame_v_lines = []
+
+        for x1, y1, x2, y2 in h_lines:
             if (
-                abs(rect["x"] - kept["x"]) < duplicate_pos_tol
-                and abs(rect["y"] - kept["y"]) < duplicate_pos_tol
-                and abs(rect["w"] - kept["w"]) / max(1.0, kept["w"])
-                < duplicate_size_tol
-                and abs(rect["h"] - kept["h"]) / max(1.0, kept["h"])
-                < duplicate_size_tol
+                y - margin <= y1 <= y + h + margin
+                and y - margin <= y2 <= y + h + margin
             ):
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            deduped.append(rect)
+                if x - margin <= min(x1, x2) and max(x1, x2) <= x + w + margin:
+                    frame_h_lines.append((x1, y1, x2, y2))
 
-    return deduped
+        for x1, y1, x2, y2 in v_lines:
+            if (
+                x - margin <= x1 <= x + w + margin
+                and x - margin <= x2 <= x + w + margin
+            ):
+                if y - margin <= min(y1, y2) and max(y1, y2) <= y + h + margin:
+                    frame_v_lines.append((x1, y1, x2, y2))
 
+        enhanced_frame = frame.copy()
+        enhanced_frame["h_lines_count"] = len(frame_h_lines)
+        enhanced_frame["v_lines_count"] = len(frame_v_lines)
+        enhanced_frame["total_lines"] = len(frame_h_lines) + len(frame_v_lines)
+        enhanced_frames.append(enhanced_frame)
 
-def detect_by_contours(
-    binary: np.ndarray, canvas: Optional[np.ndarray] = None, area_ratio: float = 0.0025
-) -> Tuple[List[Dict[str, Any]], np.ndarray]:
-    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    rects: List[Dict[str, Any]] = []
-    adaptive_min_area = max(
-        int(float(binary.shape[0] * binary.shape[1]) * max(area_ratio, 0.0)), 0
-    )
-    debug_img = canvas.copy() if canvas is not None else binary.copy()
-    if debug_img.ndim == 2:
-        debug_img = cv2.cvtColor(debug_img, cv2.COLOR_GRAY2BGR)
-    img_h, img_w = debug_img.shape[:2]
-    for cnt in contours:
-        rect = _extract_rect_from_contour(cnt, min_area=adaptive_min_area)
-        if rect is None:
-            continue
-        rects.append(rect)
-    rects = _filter_and_dedup_rects(rects, img_w=img_w, img_h=img_h)
+    # Filter out noisy frames with insufficient line support
+    # Valid frames should have strong line support AND reasonable size
+    filtered_frames = []
+    for frame in enhanced_frames:
+        total_lines = frame["total_lines"]
+        v_lines_count = frame["v_lines_count"]
+        h_lines_count = frame["h_lines_count"]
+        w, h = frame["w"], frame["h"]
+        area = w * h
 
-    for idx, rect in enumerate(rects, start=1):
-        rect.setdefault("label", idx)
+        # Criteria for MAIN FRAMES (black thick borders):
+        # Problem: Thick black borders → horizontal edges hard to detect by Hough
+        # Solution: Accept frames with STRONG VERTICAL support even if horizontal is weak
 
-    if rects:
-        debug_img = _draw_rectangles(debug_img, rects)
-    print(rects)
-    print(len(rects), "found")
-    print("----------------")
+        # STRICT FILTER: Only keep PRIMARY FRAMES (black thick borders)
+        # Strategy: These frames are LARGE and have STRONG vertical lines
 
-    return debug_img, rects
+        # Primary frames: Very large with some support
+        is_primary = (
+            area >= 150000  # Very large (>= 300x500)
+            and v_lines_count >= 2  # At least some vertical support
+        )
 
+        # Secondary: Moderately large with STRONG vertical
+        is_secondary = (
+            area >= 100000  # Large (>= 250x400)
+            and v_lines_count >= 4  # Very strong vertical
+        )
 
-def remove_non_rect(
-    binary: np.ndarray,
-    area_ratio: float = 0.0025,
-):
-    # Tìm contour ngoài cùng
-    contours, _ = cv2.findContours(binary, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-    mask = np.zeros_like(binary)
-    rects_dict: List[Dict[str, Any]] = []
+        # Only for thick black borders: Strong vertical, no horizontal needed
+        is_thick_border = (
+            v_lines_count >= 4  # Very strong vertical (4+ lines)
+            and area >= 80000  # Reasonably large
+            and total_lines <= 8  # Not too many lines (avoid noisy regions)
+        )
 
-    adaptive_min_area = max(
-        int(float(binary.shape[0] * binary.shape[1]) * max(area_ratio, 0.0)), 0
-    )
+        is_valid = is_primary or is_secondary or is_thick_border
+        is_valid = True
+        if is_valid:
+            filtered_frames.append(frame)
+        else:
+            print(
+                f"  ⚠ Filtered noisy frame: {frame['w']}x{frame['h']}px "
+                f"(only {frame['h_lines_count']}H + {frame['v_lines_count']}V lines, area={area:.0f})"
+            )
 
-    for cnt in contours:
-        rect = _extract_rect_from_contour(cnt, min_area=adaptive_min_area)
-        if rect is None:
-            continue
-        rects_dict.append(rect)
-    filtered_rects = _filter_and_dedup_rects(
-        rects_dict, img_w=binary.shape[1], img_h=binary.shape[0]
-    )
-    rects: List[Tuple[int, int, int, int]] = []
-    for rect in filtered_rects:
-        x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
-        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
-        rects.append((x, y, w, h))
-
-    return mask, rects
+    return filtered_frames
 
 
 def detect_frames_pipeline(
     image: np.ndarray,
     output_path: Optional[Path] = None,
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    """Main pipeline to detect aluminum frames.
+
+    Steps:
+    1. Convert to grayscale
+    2. Apply OTSU threshold
+    3. Remove text regions (dimension annotations, numbers)
+    4. Remove diagonal lines (keep only horizontal/vertical structures)
+    5. Connect broken lines (detect and extend line segments intelligently)
+    6. Reconnect broken frames (aggressive morphology to close remaining gaps)
+    7. Detect frames by contours
+    8. Detect Hough lines
+    9. Filter frames by line support
+    10. Draw results
+
+    Returns:
+        Tuple of (annotated image, list of detected frames with dimensions)
+    """
     if image is None or (hasattr(image, "size") and image.size == 0):
-        raise ValueError("detect_frames_pipeline: input image is empty or None")
+        raise ValueError("Input image is empty or None")
+
+    print("\n=== Frame Detection Pipeline ===")
+
+    # Store intermediate results
+    pipeline_data = {
+        "original": image,
+        "binary": None,
+        "frames": [],
+        "lines": ([], []),
+        "enhanced_frames": [],
+    }
+
+    def store_binary(binary: np.ndarray) -> np.ndarray:
+        """Store binary image for later use."""
+        pipeline_data["binary"] = binary
+        return binary
+
+    def detect_contour_frames(binary: np.ndarray) -> np.ndarray:
+        """Detect frames using contours."""
+        print("  → Detecting frames by contours...")
+        frames = detect_frames_by_contours(
+            binary,
+            min_area_ratio=0.001,  # 0.1% of image
+            max_aspect=15.0,  # Allow reasonable rectangles
+            min_fill_ratio=0.0,  # Not used anymore
+        )
+        print(f"    Found {len(frames)} potential frames")
+        pipeline_data["frames"] = frames
+        return binary
+
+    def detect_hough_lines(binary: np.ndarray) -> np.ndarray:
+        """Detect lines from validated frames only."""
+        print("  → Detecting edges by Hough lines...")
+        # CRITICAL: Only extract edges from already-validated frames
+        # Don't re-detect contours (which includes filtered-out frames)
+        lines, line_image = extract_edges_from_frames(
+            pipeline_data["frames"], binary.shape
+        )
+        pipeline_data["lines"] = lines
+        return line_image
+
+    def filter_frames_by_lines(line_image: np.ndarray) -> np.ndarray:
+        """Filter frames based on line support."""
+        print("  → Filtering frames by line support...")
+        enhanced_frames = extract_frame_dimensions(
+            pipeline_data["frames"], pipeline_data["lines"]
+        )
+        pipeline_data["enhanced_frames"] = enhanced_frames
+        return line_image
+
+    def draw_final_results(line_image: np.ndarray) -> np.ndarray:
+        """Draw rectangles on original image."""
+        print("  → Drawing results...")
+        annotated = draw_rectangles(
+            pipeline_data["original"],
+            pipeline_data["enhanced_frames"],
+            color=(0, 255, 0),
+            thickness=3,
+        )
+
+        # Print summary
+        frames = pipeline_data["enhanced_frames"]
+        print(f"\n✓ Detection completed: {len(frames)} frames found")
+        for i, frame in enumerate(frames):
+            print(
+                f"  Frame {i+1}: {frame['w']}x{frame['h']}px, "
+                f"Area: {frame['area']:.0f}, "
+                f"Lines: {frame['h_lines_count']}H + {frame['v_lines_count']}V"
+            )
+
+        return annotated
+
+    # Build and run pipeline
     pipeline = ImagePipeline(output_path)
-    # pipeline.add("reverse", lambda image: cv2.bitwise_not(image))
-    pipeline.add(
-        "otsu",
-        lambda image: cv2.threshold(
-            image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )[1],
-    )
-    # Làm dày và tách vùng khép kín
-    # pipeline.add(
-    #     "dilate",
-    #     lambda image: cv2.dilate(image, np.ones((5, 5), np.uint8), iterations=1),
-    # )
-    # pipeline.add(
-    #     "erode", lambda image: cv2.erode(image, np.ones((3, 3), np.uint8), iterations=2)
-    # )
-    pipeline.add("remove_non_rect", lambda image: remove_non_rect(image)[0])
-    pipeline.add(
-        "detect_contours",
-        lambda img: detect_by_contours(binary=img, canvas=image)[0],
-    )
-    # pipeline.add("detect_hough_rects", lambda img: detect_by_hough(img)[1])
+    pipeline.add("grayscale", to_grayscale)
+    pipeline.add("otsu_threshold", apply_otsu_threshold)
+    pipeline.add("remove_text", remove_text_regions)  # Remove text/numbers first
+    pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonals
+    pipeline.add("connect_lines", connect_broken_lines)  # Connect broken segments
+    pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
+    pipeline.add("store_binary", store_binary)
+    pipeline.add("detect_contours", detect_contour_frames)
+    pipeline.add("detect_hough", detect_hough_lines)
+    pipeline.add("filter_frames", filter_frames_by_lines)
+    pipeline.add("draw_results", draw_final_results)
+
     annotated = pipeline.run(image)
-    print("save folder", output_path)
-    return annotated
+
+    return annotated, pipeline_data["enhanced_frames"]
 
 
 if __name__ == "__main__":
-    # img_path = Path("outputs/5d430f41d60b422a8385dcbc2e96c66f/Block 0/00_origin.png")
-    # img_path = Path("outputs/panel_agent/analyzer/Block 0/14_white_padding.png")
-    # img_path = Path("outputs/panel_analyze_pipeline/Block 2/00_origin.png")
-    # img_path = Path("outputs/7a08cabecf654f0b9f8b916fcbbe4c56/Block 0/00_origin.png")
-    # img_path = Path("outputs/24a94f1546374c16b54e1e411cc96010/Block 1/00_origin.png")
-    img_path = Path("assets/block/image.png")
+    frame2_bold = Path("outputs/panel_agent/analyzer/Block 0/14_white_padding.png")
+    frame4_large = Path(
+        "outputs/5d430f41d60b422a8385dcbc2e96c66f/Block 0/00_origin.png"
+    )
+    frame2_bold_noise = Path(
+        "outputs/panel_agent/analyzer/Block 0/14_white_padding.png"
+    )
+    frame_trapezium = Path(
+        "outputs/7a08cabecf654f0b9f8b916fcbbe4c56/Block 0/00_origin.png"
+    )
+    frame4_bold = Path("assets/block/bold4frame.png")
+    thin8frame = Path("assets/block/thin8frame.png")
 
+    img_path = frame2_bold
+    # img_path = frame4_large
+    # img_path = frame2_bold_noise
+    # img_path = frame4_bold
+    # img_path = thin8frame
     output_dir = Path("outputs", "frame_detection")
-    # if output_dir.exists():
-    #     shutil.rmtree(output_dir)
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
     image = cv2.imread(img_path)
     if image is None:
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    normalized_image = normalize_image(image, output_dir / "normalized_image")
-    if normalized_image is None:
+    image = normalize_image(image, output_dir / "normalized_image")
+    if image is None:
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    print("Image loaded successfully, Starting frame detection...")
-    annotated = detect_frames_pipeline(normalized_image, output_path=output_dir)
-    print("Frame detection completed successfully.")
+    annotated, frames = detect_frames_pipeline(image, output_path=output_dir)
+    print(f"\n✓ Pipeline completed. Results saved to: {output_dir}")

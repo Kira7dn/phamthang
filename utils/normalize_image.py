@@ -67,7 +67,7 @@ def normalize_image(
     pipeline.add("morph_open", lambda image: morph_open(image, (2, 2), 1))
     pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 2))
     pipeline.add("remove_small_components", remove_small_components)
-    pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
+    # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
     # pipeline.add("invert_background", invert_background)
     pipeline.add("white_padding", lambda img: add_white_padding(img, padding_pct))
     if final_short_edge is not None:
