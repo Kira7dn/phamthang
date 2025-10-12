@@ -324,11 +324,13 @@ def visualize_boxes(
     return vis
 
 
-def resize_with_limit(img, max_width=1920, max_height=1920):
+def resize_with_limit(
+    img, max_width=1920, max_height=1920, scale: Optional[float] = None
+):
     h, w = img.shape[:2]
 
     # Tính tỷ lệ thu phóng
-    scale = min(max_width / w, max_height / h)
+    scale = min(max_width / w, max_height / h) if scale is None else scale
     # Nếu scale >= 1 → upscale, ngược lại → downscale
     if scale >= 1:
         interpolation = cv2.INTER_CUBIC  # phóng to, giữ chi tiết
@@ -338,7 +340,7 @@ def resize_with_limit(img, max_width=1920, max_height=1920):
     new_w, new_h = int(w * scale), int(h * scale)
     resized = cv2.resize(img, (new_w, new_h), interpolation=interpolation)
 
-    return resized
+    return resized, scale
 
 
 def morph_close(
@@ -379,7 +381,11 @@ def adaptive_threshold(
 
 
 def to_gray(img: np.ndarray) -> np.ndarray:
-    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if img.ndim == 2:
+        return img
+    if img.ndim == 3:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    raise ValueError("to_gray: input must be 2D or 3-channel image")
 
 
 def to_bgr(img: np.ndarray) -> np.ndarray:
@@ -458,9 +464,11 @@ def add_white_padding(img_input: np.ndarray, padding_pct: float = 0.02) -> np.nd
     return canvas
 
 
-def bridge_horizontal(binary: np.ndarray) -> np.ndarray:
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    bridged = cv2.dilate(binary, kernel, iterations=1)
+def bridge_horizontal(
+    binary: np.ndarray, kernel_size: Tuple[int, int] = (3, 3), iterations: int = 1
+) -> np.ndarray:
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
+    bridged = cv2.dilate(binary, kernel, iterations=iterations)
     return bridged
 
 

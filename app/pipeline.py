@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import numpy as np
 
 from app.agent.item_builder import BuildItemAgent, BuildItemOutput
-from app.agent.image_analyzer import ImageAnalyzeAgent
+from app.agent.image_analyzer_old import ImageAnalyzeAgent
 from app.agent.panel_verifier import PanelVerifyAgent
 
 
@@ -17,10 +17,13 @@ logger = logging.getLogger("app.pipeline")
 
 
 class ExtractPanelPipeline:
+
     def __init__(
         self,
-        analyze_model_id: str = "google-gla:gemini-2.5-flash",
-        verify_model_id: str = "openai:o4-mini",
+        # analyze_model_id: str = "google-gla:gemini-2.0-flash",
+        analyze_model_id: str = "openai:gpt-4o",
+        verify_model_id: str = "openai:gpt-5-nano",
+        item_model_id: str = "openai:gpt-5-nano",
         output_dir: Optional[Path] = None,
     ) -> None:
         self.output_dir = output_dir
@@ -39,7 +42,7 @@ class ExtractPanelPipeline:
         )
         self.item_agent = BuildItemAgent(
             output_dir=output_dir,
-            model_id=verify_model_id,
+            model_id=item_model_id,
         )
 
     def run(self, image: Union[np.ndarray, Path]) -> BuildItemOutput:
@@ -62,11 +65,16 @@ class ExtractPanelPipeline:
 
 def main() -> None:
     load_dotenv()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     # img_path = Path("assets/19b2e788907a1a24436b.jpg")
-    img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
+    # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
+    img_path = Path("assets/z7102259936013_b55eb7da65cf594e93eb2b8ff31af7b6.jpg")
     output_dir = Path("outputs/panel_analyze_pipeline")
     if output_dir.exists():
         shutil.rmtree(output_dir)

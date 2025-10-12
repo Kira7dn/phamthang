@@ -19,7 +19,6 @@ logger = logging.getLogger("app.agent.panel_verifier")
 
 # ======== Shared schemas (aligned with image_llm.py) ========
 class Panel(BaseModel):
-    panel_index: int
     outer_width: float | int
     outer_height: float | int
     inner_heights: List[float] = Field(default_factory=list)

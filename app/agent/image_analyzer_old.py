@@ -10,33 +10,70 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 
-from pydantic_ai import BinaryContent
+from pydantic import BaseModel
+from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.models.google import GoogleModelSettings
 
 from utils.cluster_image import extract_block_images
 from utils.normalize_image import normalize_image
-from app.agent.panel_chain_agent import PanelChainAgent, PanelsLLMResult
-from app.agent.panel_verifier import Block, AggregatedResult
+from app.agent.panel_verifier import Block, Panel, AggregatedResult
 
 
 logger = logging.getLogger("app.agent.image_analyzer")
 
 
+class PanelsLLMResult(BaseModel):
+    panels: List[Panel]
+
+
 def load_image_bytes(
-    image_input: Union[np.ndarray, Path],
-    output_dir: Optional[Path] = None,
-    *,
-    final_short_edge: Optional[int] = 500,
-) -> List[BinaryContent]:
+    image_input: Union[np.ndarray, Path], output_dir: Optional[Path] = None
+) -> BinaryContent:
     # Kiểm tra image_input là Path hay numpy array
     if isinstance(image_input, Path):
         image_input = cv2.imread(str(image_input))
-    processed = normalize_image(
-        image_input, output_dir, final_short_edge=final_short_edge
-    )
+    processed = normalize_image(image_input, output_dir)
     success, encoded = cv2.imencode(".png", processed)
     if not success:
         raise ValueError("Không thể mã hóa ảnh đã tiền xử lý")
-    return [BinaryContent(data=encoded.tobytes(), media_type="image/png")]
+    return BinaryContent(data=encoded.tobytes(), media_type="image/png")
+
+
+def create_prompt() -> str:
+    return """
+        ### Task: Analyze technical drawing of an aluminum-frame assembly, return **only JSON**, strictly this schema:
+        {
+            "panels": [
+            {
+                "panel_index": <int>, // Unique index, starting from 1
+                "outer_width": <number>, // Outer width in millimetres
+                "outer_height": <number>, // Outer height in millimetres
+                "inner_heights": [<number>, ...] // List of inner measurements inside height_mm
+            }
+            ]
+        }
+    """
+
+
+system_prompt = """
+You are an **Aluminum Frame Panel Analyst**.
+### Detection rules
+1. A **panel** is any fully enclosed rectangle with a bold/non-dashed outline, treat every panel separately even if they share edges.
+2. Order panels from left→right, then top→bottom.
+
+### Extraction rules
+- `outer_width`, `outer_height`: 
+    + The outermost dimension labels exactly as written.
+    + If a panel has no width or height, refer from the same panel or return `0`.
+- `inner_heights`: 
+    + Must include **all values exactly as in the drawing** Preserve original exactly from top -> bottom (e.g. [100,450,450,100]).
+    + If a panel has no inner height let it empty never refer from other panel. 
+    + Must not include any values that are not in the drawing.
+### Constraints
+- Do **not** merge or omit any panels.
+- Keep numbers exactly as they appear (no unit conversion, no extra text).
+- Respond with **valid JSON only** (no Markdown, no explanation).
+"""
 
 
 class ImageAnalyzeAgent:
@@ -45,32 +82,30 @@ class ImageAnalyzeAgent:
     def __init__(
         self,
         output_dir: Optional[Path] = None,
-        # detect_model_id: str = "google-gla:gemini-2.5-flash-lite",
         # detect_model_id: str = "google-gla:gemini-2.0-flash",
+        # detect_model_id: str = "google-gla:gemini-2.5-flash-lite",
         detect_model_id: str = "openai:gpt-4o",
     ) -> None:
         self.output_dir = output_dir
         self.detect_model_id = detect_model_id
+        # Khởi tạo agent và prompt một lần cho toàn pipeline
+        self.agent = Agent(
+            self.detect_model_id,
+            output_type=PanelsLLMResult,
+            system_prompt=system_prompt,
+            model_settings=GoogleModelSettings(
+                google_thinking_config={"include_thoughts": True},
+                temperature=0,
+            ),
+        )
+        self.prompt = create_prompt()
 
     def run(self, source_image: Union[np.ndarray, Path]) -> AggregatedResult:
-        # Kiểm tra API key theo provider
-        if self.detect_model_id.startswith("openai:"):
-            if not os.getenv("OPENAI_API_KEY"):
-                message = "Thiếu biến môi trường OPENAI_API_KEY cho OpenAI API"
-                logger.info(f"{message}", file=sys.stderr)
-                raise RuntimeError(message)
-            logger.info("OPENAI_API_KEY detected, proceeding with analysis")
-        elif self.detect_model_id.startswith("google-gla:"):
-            if not os.getenv("GOOGLE_API_KEY"):
-                message = "Thiếu biến môi trường GOOGLE_API_KEY cho Gemini API"
-                logger.info(f"{message}", file=sys.stderr)
-                raise RuntimeError(message)
-            logger.info("GOOGLE_API_KEY detected, proceeding with analysis")
-        else:
-            logger.warning(
-                "Unknown model provider for %s; make sure proper API key is set",
-                self.detect_model_id,
-            )
+        if not os.getenv("GOOGLE_API_KEY"):
+            message = "Thiếu biến môi trường GOOGLE_API_KEY cho Gemini API"
+            print(message, file=sys.stderr)
+            raise RuntimeError(message)
+        logger.info("GOOGLE_API_KEY detected, proceeding with analysis")
 
         # Đảm bảo thư mục output tồn tại nếu người dùng cung cấp
         if self.output_dir:
@@ -94,11 +129,13 @@ class ImageAnalyzeAgent:
             block_dir = (
                 Path(self.output_dir, f"Block {str(idx)}") if self.output_dir else None
             )
-            # Shared multi-modal context (encode ảnh một lần dùng cho cả chuỗi agent)
-            shared_context = load_image_bytes(image, block_dir, final_short_edge=500)
-            logger.info("Running panel chain for block", extra={"block_index": idx})
-            chain = PanelChainAgent(model=self.detect_model_id, output_dir=block_dir)
-            panels_result: PanelsLLMResult = chain.run_chain(shared_context)
+            processed_image = load_image_bytes(image, block_dir)
+            logger.info("Running analysis agent for block", extra={"block_index": idx})
+            agent_result = self.agent.run_sync([self.prompt, processed_image])
+            if isinstance(agent_result.output, PanelsLLMResult):
+                panels_result = agent_result.output
+            else:
+                panels_result = PanelsLLMResult.model_validate(agent_result.output)
             logger.info(
                 "Analysis agent completed",
                 extra={"block_index": idx, "panel_count": len(panels_result.panels)},
@@ -134,8 +171,10 @@ def main():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # image = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
     # image = Path("outputs/panel_analyze_pipeline/Block 0/00_origin.png")
     image = Path("outputs/panel_analyze_pipeline/Block 2/00_origin.png")
+
     output_dir = Path("outputs/panel_agent/analyzer")
     if output_dir.exists():
         shutil.rmtree(output_dir)
