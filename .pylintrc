@@ -21,6 +21,7 @@ disable =   protected-access,
             missing-class-docstring,
             missing-function-docstring,
             unused-variable,
+            invalid-name,
 
 [MESSAGES CONTROL]
 # Disable specific checks for test files

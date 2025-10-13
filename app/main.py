@@ -166,10 +166,16 @@ async def extract_panel(
         )
         result = await asyncio.to_thread(pipeline.run, tmp_path)
         logger.info(
-            "Pipeline execution completed | output_dir=%s",
+            "Pipeline execution completed | output_dir=%s | confidence=%.3f",
             output_dir_display,
+            result.confidence,
         )
-        payload = result.model_dump()
+        
+        # Build response with conf and materialist
+        payload = {
+            "conf": result.confidence,
+            "materialist": [item.model_dump() for item in result.bill_of_materials.material_list]
+        }
         return JSONResponse(content=payload)
     except RuntimeError as exc:
         logger.exception("Pipeline execution failed")

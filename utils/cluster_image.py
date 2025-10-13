@@ -19,6 +19,7 @@ from utils.image_process import (
     resize_with_limit,
     to_gray,
 )
+from utils.blockprocess import remove_diagonal_lines, reconnect_broken_frames
 
 
 @dataclass
@@ -208,7 +209,9 @@ def segment_blocks(
     pipeline = ImagePipeline(output_dir)
 
     def resize_step(img: np.ndarray) -> np.ndarray:
-        resized = resize_with_limit(img)
+        # Increase max size to preserve frame detection quality
+        # Original: 1920x1920, New: 3840x3840 (4K resolution)
+        resized = resize_with_limit(img, max_width=3840, max_height=3840)[0]
         resized_height, resized_width = resized.shape[:2]
         if resized_width == 0 or resized_height == 0:
             resize_state["ratio_w"] = 1.0
@@ -279,7 +282,12 @@ def segment_blocks(
     pipeline.add("adaptive_threshold", adaptive_threshold)
     pipeline.add("morph_open", lambda image: morph_open(image, (1, 1), 1))
     pipeline.add("morph_close", lambda image: morph_close(image, (2, 2), 1))
+    pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonal lines
     pipeline.add("enhance_lines", enhance_lines)
+    pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
+    pipeline.add(
+        "final_close", lambda image: morph_close(image, (5, 5), 3)
+    )  # Strong closing
     pipeline.add("expand", expand)
     pipeline.add("cluster", cluster_annotated)
     pipeline.add("cluster_filtered", cluster_annotated_filtered)
@@ -339,14 +347,19 @@ def extract_block_images(
 
 
 def main() -> None:
-    # img_path = Path("assets/z7064219281543_b33d93d5cf3880d2f5f6bab3ed22eb89.jpg")
+    img_path = Path("assets/z7064219281543_b33d93d5cf3880d2f5f6bab3ed22eb89.jpg")
     # img_path = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
     # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
+    # img_path = Path("assets/z7070874695339_7eec1b9a231e267bca5e9e795f4f630d.jpg")
     # img_path = Path("assets/z7070871858185_d94ed70d5e13fd0ae4bbf39107e29819.jpg")
-    img_path = Path("assets/z7070874630840_d04d8f5aa9a4d5ff280a48471768c51d.jpg")
+    # img_path = Path("assets/z7070874630840_d04d8f5aa9a4d5ff280a48471768c51d.jpg")
+    # img_path = Path(
+    #     "outputs/82ef296e5d08418b9699c3e1e386746e/cluster_image/00_origin.png"
+    # )
+    # img_path = Path("assets/19b2e788907a1a24436b.jpg")
 
     output_dir = Path("outputs/cluster_image")
 

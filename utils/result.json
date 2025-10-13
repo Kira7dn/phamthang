@@ -1,0 +1,749 @@
+[
+  {
+    "id": "0",
+    "name": "2 frames - same column",
+    "expected": [
+      {
+        "outer": [
+          549,
+          697
+        ],
+        "inner": [
+          100,
+          497,
+          100
+        ]
+      },
+      {
+        "outer": [
+          549,
+          1216
+        ],
+        "inner": [
+          100,
+          508,
+          508,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 1.4272300469483568,
+      "estimation_debug": {
+        "scale": 1.4272300469483568,
+        "seed_pair": [
+          852,
+          1216.0
+        ],
+        "avg_rel_error": 0.01752885745102582,
+        "refined_scale": 1.435141626397748
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 660,
+            "y": 1014,
+            "w": 362,
+            "h": 852
+          },
+          "outer_width": 508,
+          "outer_width_rel_error": 0.01704188384902578,
+          "outer_width_conf": 0.9147905807548711,
+          "outer_height": 1216,
+          "outer_height_rel_error": 0.0,
+          "outer_height_conf": 1.0,
+          "inner_heights": [
+            100.0,
+            508.0,
+            508.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 516.6572769953051,
+            "h_mm": 1216.0
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 660,
+            "y": 502,
+            "w": 362,
+            "h": 471
+          },
+          "outer_width": 508,
+          "outer_width_rel_error": 0.01704188384902578,
+          "outer_width_conf": 0.9147905807548711,
+          "outer_height": 1216,
+          "outer_height_rel_error": 0.44718309859154937,
+          "outer_height_conf": 0.0,
+          "inner_heights": [
+            100.0,
+            497.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 516.6572769953051,
+            "h_mm": 672.225352112676
+          }
+        }
+      ],
+      "global_usage": {
+        "100.0": 4,
+        "508.0": 2,
+        "497.0": 1
+      },
+      "best_cost": 0.06962845620210324,
+      "iterations": 1
+    },
+    "passed_panels": 0
+  },
+  {
+    "id": "1",
+    "name": "4 frames - 2x2 grid",
+    "expected": [
+      {
+        "outer": [
+          548,
+          697
+        ],
+        "inner": [
+          100,
+          497,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          697
+        ],
+        "inner": [
+          100,
+          497,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          2269
+        ],
+        "inner": [
+          100,
+          517,
+          517,
+          517,
+          517,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          2269
+        ],
+        "inner": [
+          100,
+          517,
+          517,
+          517,
+          517,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 1.8022239872915011,
+      "estimation_debug": {
+        "scale": 1.8022239872915011,
+        "seed_pair": [
+          1259,
+          2269.0
+        ],
+        "avg_rel_error": 0.013687906789439758,
+        "refined_scale": 1.8107715093730212
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 533,
+            "y": 729,
+            "w": 287,
+            "h": 1252
+          },
+          "outer_width": 517,
+          "outer_width_rel_error": 0.0004608981676224342,
+          "outer_width_conf": 0.9976955091618879,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.0055599682287530506,
+          "outer_height_conf": 0.9722001588562348,
+          "inner_heights": [
+            697.0,
+            548.0,
+            548.0,
+            497.0
+          ],
+          "inner_conf": 0.9074482150727192,
+          "est_mm": {
+            "w_mm": 517.2382843526608,
+            "h_mm": 2256.3844320889593
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 232,
+            "y": 723,
+            "w": 278,
+            "h": 1259
+          },
+          "outer_width": 517,
+          "outer_width_rel_error": 0.0309124401024423,
+          "outer_width_conf": 0.8454377994877885,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.0,
+          "outer_height_conf": 1.0,
+          "inner_heights": [
+            697.0,
+            548.0,
+            548.0,
+            497.0
+          ],
+          "inner_conf": 0.9074482150727192,
+          "est_mm": {
+            "w_mm": 501.01826846703733,
+            "h_mm": 2269.0
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 538,
+            "y": 328,
+            "w": 282,
+            "h": 367
+          },
+          "outer_width": 517,
+          "outer_width_rel_error": 0.016968734204635738,
+          "outer_width_conf": 0.9151563289768213,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.7084988085782368,
+          "outer_height_conf": 0.0,
+          "inner_heights": [
+            100.0,
+            497.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 508.2271644162033,
+            "h_mm": 661.4162033359809
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 232,
+            "y": 328,
+            "w": 278,
+            "h": 367
+          },
+          "outer_width": 517,
+          "outer_width_rel_error": 0.0309124401024423,
+          "outer_width_conf": 0.8454377994877885,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.7084988085782368,
+          "outer_height_conf": 0.0,
+          "inner_heights": [
+            100.0,
+            497.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 501.01826846703733,
+            "h_mm": 661.4162033359809
+          }
+        }
+      ],
+      "global_usage": {
+        "697.0": 2,
+        "548.0": 4,
+        "497.0": 4,
+        "100.0": 4
+      },
+      "best_cost": 0.18754117333590625,
+      "iterations": 1
+    },
+    "passed_panels": 0
+  },
+  {
+    "id": "2",
+    "name": "4 frames - mirrored layout",
+    "expected": [
+      {
+        "outer": [
+          548,
+          697
+        ],
+        "inner": [
+          100,
+          497,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          697
+        ],
+        "inner": [
+          100,
+          497,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          2269
+        ],
+        "inner": [
+          100,
+          517,
+          517,
+          517,
+          517,
+          100
+        ]
+      },
+      {
+        "outer": [
+          548,
+          2269
+        ],
+        "inner": [
+          100,
+          517,
+          517,
+          517,
+          517,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 1.9201101928374655,
+      "estimation_debug": {
+        "scale": 1.9201101928374655,
+        "seed_pair": [
+          363,
+          697.0
+        ],
+        "avg_rel_error": 0.0175469561720239,
+        "refined_scale": 1.8408542535574557
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 475,
+            "y": 732,
+            "w": 286,
+            "h": 1249
+          },
+          "outer_width": 548,
+          "outer_width_rel_error": 0.0021013050210130064,
+          "outer_width_conf": 0.989493474894935,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.05694915418862682,
+          "outer_height_conf": 0.715254229056866,
+          "inner_heights": [
+            697.0,
+            548.0,
+            548.0,
+            497.0
+          ],
+          "inner_conf": 0.9074482150727192,
+          "est_mm": {
+            "w_mm": 549.1515151515151,
+            "h_mm": 2398.2176308539943
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 793,
+            "y": 732,
+            "w": 278,
+            "h": 1249
+          },
+          "outer_width": 548,
+          "outer_width_rel_error": 0.025929500713840568,
+          "outer_width_conf": 0.8703524964307972,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.05694915418862682,
+          "outer_height_conf": 0.715254229056866,
+          "inner_heights": [
+            697.0,
+            548.0,
+            548.0,
+            497.0
+          ],
+          "inner_conf": 0.9074482150727192,
+          "est_mm": {
+            "w_mm": 533.7906336088154,
+            "h_mm": 2398.2176308539943
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 793,
+            "y": 336,
+            "w": 278,
+            "h": 363
+          },
+          "outer_width": 548,
+          "outer_width_rel_error": 0.025929500713840568,
+          "outer_width_conf": 0.8703524964307972,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.6928162185985015,
+          "outer_height_conf": 0.0,
+          "inner_heights": [
+            100.0,
+            497.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 533.7906336088154,
+            "h_mm": 697.0
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 483,
+            "y": 336,
+            "w": 278,
+            "h": 362
+          },
+          "outer_width": 548,
+          "outer_width_rel_error": 0.025929500713840568,
+          "outer_width_conf": 0.8703524964307972,
+          "outer_height": 2269,
+          "outer_height_rel_error": 0.6936624549109024,
+          "outer_height_conf": 0.0,
+          "inner_heights": [
+            100.0,
+            497.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 533.7906336088154,
+            "h_mm": 695.0798898071625
+          }
+        }
+      ],
+      "global_usage": {
+        "697.0": 2,
+        "548.0": 4,
+        "497.0": 4,
+        "100.0": 4
+      },
+      "best_cost": 0.24281882894006784,
+      "iterations": 1
+    },
+    "passed_panels": 0
+  },
+  {
+    "id": "3",
+    "name": "Single tall frame",
+    "expected": [
+      {
+        "outer": [
+          596,
+          1294
+        ],
+        "inner": [
+          100,
+          547,
+          547,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 0.8300455235204856,
+      "estimation_debug": {
+        "scale": 0.8300455235204856,
+        "seed_pair": [
+          659,
+          547.0
+        ],
+        "avg_rel_error": 0.01666205411693522,
+        "refined_scale": 0.8540662322156631
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 818,
+            "y": 424,
+            "w": 659,
+            "h": 1507
+          },
+          "outer_width": 547,
+          "outer_width_rel_error": 0.0,
+          "outer_width_conf": 1.0,
+          "outer_height": 1294,
+          "outer_height_rel_error": 0.03332410823387044,
+          "outer_height_conf": 0.8333794588306478,
+          "inner_heights": [
+            100.0,
+            547.0,
+            547.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 547.0,
+            "h_mm": 1250.8786039453717
+          }
+        }
+      ],
+      "global_usage": {
+        "100.0": 2,
+        "547.0": 2
+      },
+      "best_cost": 0.03332410823387044,
+      "iterations": 1
+    },
+    "passed_panels": 0
+  },
+  {
+    "id": "4",
+    "name": "2 frames - symmetric pair",
+    "expected": [
+      {
+        "outer": [
+          637,
+          668
+        ],
+        "inner": [
+          100,
+          468,
+          100
+        ]
+      },
+      {
+        "outer": [
+          637,
+          668
+        ],
+        "inner": [
+          100,
+          468,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 1.0861788617886179,
+      "estimation_debug": {
+        "scale": 1.0861788617886179,
+        "seed_pair": [
+          615,
+          668.0
+        ],
+        "avg_rel_error": 0.003410294699493298,
+        "refined_scale": 1.0867098264376287
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 1283,
+            "y": 325,
+            "w": 589,
+            "h": 615
+          },
+          "outer_width": 637,
+          "outer_width_rel_error": 0.004331789000778534,
+          "outer_width_conf": 0.9783410549961074,
+          "outer_height": 668,
+          "outer_height_rel_error": 0.0,
+          "outer_height_conf": 1.0,
+          "inner_heights": [
+            100.0,
+            468.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 639.7593495934959,
+            "h_mm": 668.0
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 648,
+            "y": 325,
+            "w": 583,
+            "h": 615
+          },
+          "outer_width": 637,
+          "outer_width_rel_error": 0.005899095097701358,
+          "outer_width_conf": 0.9705045245114932,
+          "outer_height": 668,
+          "outer_height_rel_error": 0.0,
+          "outer_height_conf": 1.0,
+          "inner_heights": [
+            100.0,
+            468.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 633.2422764227642,
+            "h_mm": 668.0
+          }
+        }
+      ],
+      "global_usage": {
+        "100.0": 4,
+        "468.0": 2
+      },
+      "best_cost": 0.010230884098479893,
+      "iterations": 1
+    },
+    "passed_panels": 2
+  },
+  {
+    "id": "5",
+    "name": "3 frames - mixed widths",
+    "expected": [
+      {
+        "outer": [
+          615,
+          750
+        ],
+        "inner": [
+          100,
+          550,
+          100
+        ]
+      },
+      {
+        "outer": [
+          379,
+          750
+        ],
+        "inner": [
+          100,
+          550,
+          100
+        ]
+      },
+      {
+        "outer": [
+          375,
+          750
+        ],
+        "inner": [
+          100,
+          550,
+          100
+        ]
+      }
+    ],
+    "result": {
+      "scale": 1.2706611570247934,
+      "estimation_debug": {
+        "scale": 1.2706611570247934,
+        "seed_pair": [
+          484,
+          615.0
+        ],
+        "avg_rel_error": 0.03271694214876034,
+        "refined_scale": 1.27033318264373
+      },
+      "frames": [
+        {
+          "frame_pixel": {
+            "x": 437,
+            "y": 100,
+            "w": 484,
+            "h": 605
+          },
+          "outer_width": 375,
+          "outer_width_rel_error": 0.64,
+          "outer_width_conf": 0.0,
+          "outer_height": 750,
+          "outer_height_rel_error": 0.025,
+          "outer_height_conf": 0.875,
+          "inner_heights": [
+            100.0,
+            550.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 615.0,
+            "h_mm": 768.75
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 1296,
+            "y": 100,
+            "w": 280,
+            "h": 605
+          },
+          "outer_width": 375,
+          "outer_width_rel_error": 0.05123966942148763,
+          "outer_width_conf": 0.7438016528925618,
+          "outer_height": 750,
+          "outer_height_rel_error": 0.025,
+          "outer_height_conf": 0.875,
+          "inner_heights": [
+            100.0,
+            550.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 355.78512396694214,
+            "h_mm": 768.75
+          }
+        },
+        {
+          "frame_pixel": {
+            "x": 972,
+            "y": 100,
+            "w": 279,
+            "h": 605
+          },
+          "outer_width": 375,
+          "outer_width_rel_error": 0.05462809917355374,
+          "outer_width_conf": 0.7268595041322313,
+          "outer_height": 750,
+          "outer_height_rel_error": 0.025,
+          "outer_height_conf": 0.875,
+          "inner_heights": [
+            100.0,
+            550.0,
+            100.0
+          ],
+          "inner_conf": 1.0,
+          "est_mm": {
+            "w_mm": 354.51446280991735,
+            "h_mm": 768.75
+          }
+        }
+      ],
+      "global_usage": {
+        "100.0": 6,
+        "550.0": 3
+      },
+      "best_cost": 0.18086776859504136,
+      "iterations": 1
+    },
+    "passed_panels": 1
+  }
+]

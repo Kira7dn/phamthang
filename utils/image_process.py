@@ -173,41 +173,57 @@ def bold_text(
 def enhance_lines(img_input: np.ndarray) -> np.ndarray:
     """
     Phát hiện và nối liền các đường thẳng trong `img_input` bằng HoughLinesP và morphology.
+    Enhanced version with stronger line connection.
     """
     bin_img, inverted = _ensure_binary(img_input)
 
     h, w = bin_img.shape
     mask_lines = np.zeros_like(bin_img)
 
-    # Thicken lines trước khi detect để nối đứt
+    # Thicken lines trước khi detect để nối đứt - STRONGER
     thickened = cv2.morphologyEx(
         bin_img,
         cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
-        iterations=1,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+        iterations=2,
     )
 
     edges = cv2.Canny(
-        thickened, 30, 200, apertureSize=3
-    )  # Giảm ngưỡng Canny để detect edges mảnh hơn
-    lines = cv2.HoughLinesP(
+        thickened, 20, 150, apertureSize=3
+    )  # Lower thresholds to detect weaker edges
+    
+    # Detect horizontal and vertical lines separately for better results
+    lines_h = cv2.HoughLinesP(
         edges,
         rho=1,
         theta=np.pi / 180,
-        threshold=30,  # Giảm threshold để detect lines yếu hơn
-        minLineLength=25,  # Giảm min length để detect lines ngắn
-        maxLineGap=50,  # Tăng maxGap để nối lines đứt xa hơn
+        threshold=20,  # Lower threshold
+        minLineLength=20,  # Shorter lines
+        maxLineGap=80,  # Larger gap for broken lines
     )
+    
+    if lines_h is not None:
+        for x1, y1, x2, y2 in lines_h.reshape(-1, 4):
+            # Draw thicker lines
+            cv2.line(mask_lines, (x1, y1), (x2, y2), 255, 3)
 
-    if lines is not None:
-        for x1, y1, x2, y2 in lines.reshape(-1, 4):
-            cv2.line(mask_lines, (x1, y1), (x2, y2), 255, 2)
-
-    # Dilate nhiều hơn để nối liền các line đứt và làm dày
+    # Strong morphological closing to connect gaps
+    # Horizontal closing
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
+    horizontal = cv2.morphologyEx(mask_lines, cv2.MORPH_CLOSE, h_kernel, iterations=2)
+    
+    # Vertical closing
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+    vertical = cv2.morphologyEx(mask_lines, cv2.MORPH_CLOSE, v_kernel, iterations=2)
+    
+    # Combine
+    enhanced_lines = cv2.bitwise_or(horizontal, vertical)
+    
+    # Additional dilation to strengthen
     enhanced_lines = cv2.dilate(
-        mask_lines,
+        enhanced_lines,
         cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
-        iterations=2,  # Tăng iterations để nối tốt hơn
+        iterations=3,
     )
 
     # Kết hợp với ảnh nhị phân gốc để giữ lại các chi tiết khác

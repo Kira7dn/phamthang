@@ -1,0 +1,449 @@
+[
+  {
+    "id": "0",
+    "name": "2 frames - same column",
+    "total_panels": 2,
+    "passed_panels": 2,
+    "scale": 1.4562299094172502,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 527.1552272090446,
+          "h": 1240.7078828234971
+        },
+        "outer_width": 549,
+        "outer_width_rel_error": 0.03979,
+        "outer_width_conf": 0.955,
+        "outer_height": 1216,
+        "outer_height_rel_error": 0.020319,
+        "outer_height_conf": 0.955,
+        "inner_heights": [
+          100.0,
+          508.0,
+          508.0,
+          100.0
+        ],
+        "inner_conf": 0.955,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 527.1552272090446,
+          "h": 685.8842873355248
+        },
+        "outer_width": 549,
+        "outer_width_rel_error": 0.03979,
+        "outer_width_conf": 0.955,
+        "outer_height": 697,
+        "outer_height_rel_error": 0.015948,
+        "outer_height_conf": 0.955,
+        "inner_heights": [
+          100.0,
+          497.0,
+          100.0
+        ],
+        "inner_conf": 0.955,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "1",
+    "name": "4 frames - 2x2 grid",
+    "total_panels": 4,
+    "passed_panels": 4,
+    "scale": 1.8333333333333333,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 2302.6666666666665
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.976,
+        "outer_height": 2269,
+        "outer_height_rel_error": 0.014838,
+        "outer_height_conf": 0.976,
+        "inner_heights": [
+          100.0,
+          517.0,
+          517.0,
+          517.0,
+          517.0,
+          100.0
+        ],
+        "inner_conf": 0.961,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 509.66666666666663,
+          "h": 2302.6666666666665
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.069951,
+        "outer_width_conf": 0.976,
+        "outer_height": 2269,
+        "outer_height_rel_error": 0.014838,
+        "outer_height_conf": 0.976,
+        "inner_heights": [
+          100.0,
+          517.0,
+          517.0,
+          517.0,
+          517.0,
+          100.0
+        ],
+        "inner_conf": 0.961,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 672.8333333333333
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.976,
+        "outer_height": 697,
+        "outer_height_rel_error": 0.034672,
+        "outer_height_conf": 0.976,
+        "inner_heights": [
+          100.0,
+          497.0,
+          100.0
+        ],
+        "inner_conf": 0.976,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 672.8333333333333
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.976,
+        "outer_height": 697,
+        "outer_height_rel_error": 0.034672,
+        "outer_height_conf": 0.976,
+        "inner_heights": [
+          100.0,
+          497.0,
+          100.0
+        ],
+        "inner_conf": 0.976,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "2",
+    "name": "4 frames - mirrored layout",
+    "total_panels": 4,
+    "passed_panels": 4,
+    "scale": 1.8464285714285715,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 2306.1892857142857
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.959,
+        "outer_height": 2269,
+        "outer_height_rel_error": 0.01639,
+        "outer_height_conf": 0.959,
+        "inner_heights": [
+          100.0,
+          517.0,
+          517.0,
+          517.0,
+          517.0,
+          100.0
+        ],
+        "inner_conf": 0.944,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 2306.1892857142857
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.959,
+        "outer_height": 2269,
+        "outer_height_rel_error": 0.01639,
+        "outer_height_conf": 0.959,
+        "inner_heights": [
+          100.0,
+          517.0,
+          517.0,
+          517.0,
+          517.0,
+          100.0
+        ],
+        "inner_conf": 0.944,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 668.4071428571428
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.959,
+        "outer_height": 697,
+        "outer_height_rel_error": 0.041023,
+        "outer_height_conf": 0.959,
+        "inner_heights": [
+          100.0,
+          497.0,
+          100.0
+        ],
+        "inner_conf": 0.959,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 517.0,
+          "h": 668.4071428571428
+        },
+        "outer_width": 548,
+        "outer_width_rel_error": 0.056569,
+        "outer_width_conf": 0.959,
+        "outer_height": 697,
+        "outer_height_rel_error": 0.041023,
+        "outer_height_conf": 0.959,
+        "inner_heights": [
+          100.0,
+          497.0,
+          100.0
+        ],
+        "inner_conf": 0.959,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "3",
+    "name": "Single tall frame",
+    "total_panels": 1,
+    "passed_panels": 1,
+    "scale": 0.8660022991649817,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 570.695515149723,
+          "h": 1305.0654648416275
+        },
+        "outer_width": 596,
+        "outer_width_rel_error": 0.042457,
+        "outer_width_conf": 0.957,
+        "outer_height": 1294,
+        "outer_height_rel_error": 0.008551,
+        "outer_height_conf": 0.957,
+        "inner_heights": [
+          100.0,
+          547.0,
+          547.0,
+          100.0
+        ],
+        "inner_conf": 0.957,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "4",
+    "name": "2 frames - symmetric pair",
+    "total_panels": 2,
+    "passed_panels": 2,
+    "scale": 1.0861788617886179,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 636.5008130081301,
+          "h": 668.0
+        },
+        "outer_width": 637,
+        "outer_width_rel_error": 0.000784,
+        "outer_width_conf": 0.95,
+        "outer_height": 668,
+        "outer_height_rel_error": 0.0,
+        "outer_height_conf": 0.95,
+        "inner_heights": [
+          100.0,
+          468.0,
+          100.0
+        ],
+        "inner_conf": 0.95,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 636.5008130081301,
+          "h": 668.0
+        },
+        "outer_width": 637,
+        "outer_width_rel_error": 0.000784,
+        "outer_width_conf": 0.95,
+        "outer_height": 668,
+        "outer_height_rel_error": 0.0,
+        "outer_height_conf": 0.95,
+        "inner_heights": [
+          100.0,
+          468.0,
+          100.0
+        ],
+        "inner_conf": 0.95,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "5",
+    "name": "3 frames - mixed widths",
+    "total_panels": 3,
+    "passed_panels": 3,
+    "scale": 1.2706611570247934,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 615.0,
+          "h": 768.75
+        },
+        "outer_width": 615,
+        "outer_width_rel_error": 0.0,
+        "outer_width_conf": 0.925,
+        "outer_height": 750,
+        "outer_height_rel_error": 0.025,
+        "outer_height_conf": 0.925,
+        "inner_heights": [
+          100.0,
+          550.0,
+          100.0
+        ],
+        "inner_conf": 0.925,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 355.78512396694214,
+          "h": 768.75
+        },
+        "outer_width": 379,
+        "outer_width_rel_error": 0.061253,
+        "outer_width_conf": 0.925,
+        "outer_height": 750,
+        "outer_height_rel_error": 0.025,
+        "outer_height_conf": 0.925,
+        "inner_heights": [
+          100.0,
+          550.0,
+          100.0
+        ],
+        "inner_conf": 0.925,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 355.78512396694214,
+          "h": 768.75
+        },
+        "outer_width": 375,
+        "outer_width_rel_error": 0.05124,
+        "outer_width_conf": 0.925,
+        "outer_height": 750,
+        "outer_height_rel_error": 0.025,
+        "outer_height_conf": 0.925,
+        "inner_heights": [
+          100.0,
+          550.0,
+          100.0
+        ],
+        "inner_conf": 0.925,
+        "inner_quality": 1.5
+      }
+    ]
+  },
+  {
+    "id": "6",
+    "name": "3 frames - same width, same height",
+    "total_panels": 3,
+    "passed_panels": 0,
+    "scale": 1.5253731343283583,
+    "frames": [
+      {
+        "frame_pixel": {
+          "w": 511.00000000000006,
+          "h": 2458.9014925373135
+        },
+        "outer_width": 511,
+        "outer_width_rel_error": 0.0,
+        "outer_width_conf": 0.953,
+        "outer_height": 2501,
+        "outer_height_rel_error": 0.016833,
+        "outer_height_conf": 0.953,
+        "inner_heights": [
+          534.0,
+          534.0,
+          510.0,
+          510.0,
+          220.0,
+          200.0
+        ],
+        "inner_conf": 0.86,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 511.00000000000006,
+          "h": 2458.9014925373135
+        },
+        "outer_width": 511,
+        "outer_width_rel_error": 0.0,
+        "outer_width_conf": 0.953,
+        "outer_height": 2501,
+        "outer_height_rel_error": 0.016833,
+        "outer_height_conf": 0.953,
+        "inner_heights": [
+          534.0,
+          534.0,
+          510.0,
+          510.0,
+          220.0,
+          200.0
+        ],
+        "inner_conf": 0.86,
+        "inner_quality": 1.5
+      },
+      {
+        "frame_pixel": {
+          "w": 511.00000000000006,
+          "h": 2458.9014925373135
+        },
+        "outer_width": 511,
+        "outer_width_rel_error": 0.0,
+        "outer_width_conf": 0.953,
+        "outer_height": 2501,
+        "outer_height_rel_error": 0.016833,
+        "outer_height_conf": 0.953,
+        "inner_heights": [
+          534.0,
+          534.0,
+          510.0,
+          510.0,
+          220.0,
+          200.0
+        ],
+        "inner_conf": 0.86,
+        "inner_quality": 1.5
+      }
+    ]
+  }
+]
