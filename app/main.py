@@ -20,18 +20,24 @@ from app.pipeline import ExtractPanelPipeline
 
 
 log_format = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-data_dir = Path("outputs")
-data_dir.mkdir(parents=True, exist_ok=True)
+is_production = os.getenv("IS_PRODUCTION", "").lower() == "true"
 
-log_handlers = [
-    logging.StreamHandler(),
-    RotatingFileHandler(
-        data_dir / "app.log",
-        maxBytes=5 * 1024 * 1024,
-        backupCount=2,
-        encoding="utf-8",
-    ),
-]
+# In production (Lambda), không tạo/thao tác thư mục outputs hay file log
+data_dir = None
+if not is_production:
+    data_dir = Path("outputs")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+log_handlers = [logging.StreamHandler()]
+if data_dir is not None and data_dir.exists():
+    log_handlers.append(
+        RotatingFileHandler(
+            data_dir / "app.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=2,
+            encoding="utf-8",
+        )
+    )
 
 logging.basicConfig(
     level=logging.INFO,
@@ -158,6 +164,9 @@ async def extract_panel(
         )
 
     try:
+        # Lazy import để tránh import cv2 ở cold start (giúp /health không lỗi)
+        from app.pipeline import ExtractPanelPipeline
+
         pipeline = ExtractPanelPipeline(output_dir=output_dir)
         output_dir_display = str(output_dir) if output_dir else "None"
         logger.info(

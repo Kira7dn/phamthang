@@ -1,32 +1,14 @@
-# ==========================================
-# Stage 1: Build dependencies
-# ==========================================
-FROM python:3.12-slim AS builder
-
-WORKDIR /app
-
-# Tăng tốc pip & build deps (OpenCV cần gcc)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ make \
-    libjpeg-dev zlib1g-dev libpng-dev libtiff-dev libfreetype6-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Cài pip và build deps
-COPY requirements.lambda.txt .
-RUN pip install --upgrade pip setuptools wheel \
-    && pip wheel --no-cache-dir -r requirements.lambda.txt -w /wheels
-
-# ==========================================
-# Stage 2: Runtime image (Lambda base)
-# ==========================================
+# Lambda official base
 FROM public.ecr.aws/lambda/python:3.12
 
-# Copy dependencies và mã nguồn
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
+WORKDIR ${LAMBDA_TASK_ROOT}
 
-WORKDIR /var/task
-COPY . .
+# Install dependencies with mirror
+COPY requirements.lambda.txt .
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.lambda.txt
 
-# CMD của Lambda runtime
+# Copy app code
+COPY app/ ./app/
+
+# Lambda handler
 CMD ["app.main.handler"]

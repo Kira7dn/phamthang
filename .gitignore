@@ -3,7 +3,7 @@ outputs/
 assets/
 models/
 deploy.sh
-
+.build_cache/
 # Logs
 logs/
 *.log
