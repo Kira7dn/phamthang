@@ -1,29 +1,55 @@
+version: "3.8"
+
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        TARGET_ENV: base          # Luôn build môi trường base (local/VPS)
     image: phamthang-app:latest
     container_name: phamthang-api
+
     env_file:
       - .env
+
     environment:
-      - IS_PRODUCTION=false
+      IS_PRODUCTION: "false"      # flag cho app biết đang chạy local
+
     ports:
-      - "8001:8000"
+      - "8001:8000"               # host:container
+
     volumes:
-      - ./outputs:/app/outputs
+      - ./outputs:/app/outputs:rw # ánh xạ thư mục output
+      - ./tmp:/app/tmp:rw         # thêm tmp cho nhất quán với entrypoint
+
+    user: "1000:1000"             # chạy bằng user appuser (trong image)
+
     networks:
       - app_network
+
     mem_limit: 1g
     restart: always
+
+    # ✅ Healthcheck cơ bản đảm bảo app sống
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   ngrok:
     image: ngrok/ngrok:latest
     container_name: phamthang-ngrok
     command: http api:8000 --authtoken=${NGROK_AUTHTOKEN} --url=${NGROK_URL}
+
     ports:
       - "4040:4040"
+
     depends_on:
-      - api
+      api:
+        condition: service_healthy   # 🔥 chỉ khởi động sau khi API lên
+
     networks:
       - app_network
     restart: always

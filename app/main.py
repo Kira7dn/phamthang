@@ -170,11 +170,13 @@ async def extract_panel(
             output_dir_display,
             result.confidence,
         )
-        
+
         # Build response with conf and materialist
         payload = {
             "conf": result.confidence,
-            "materialist": [item.model_dump() for item in result.bill_of_materials.material_list]
+            "materialist": [
+                item.model_dump() for item in result.bill_of_materials.material_list
+            ],
         }
         return JSONResponse(content=payload)
     except RuntimeError as exc:
@@ -204,6 +206,16 @@ def clear_outputs() -> JSONResponse:
 def health_check() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
+
+# pylint: disable=import-error
+try:
+    from mangum import Mangum
+
+    handler = Mangum(app)
+    logger.info("Mangum available: Lambda handler created.")
+except Exception:
+    handler = None
+    logger.info("Mangum not available: running in normal server mode.")
 
 if __name__ == "__main__":
     import uvicorn
