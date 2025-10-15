@@ -183,11 +183,14 @@ if __name__ == "__main__":
         "outputs/67f6ef3dadba4dc6b84c23c66e078b73/Block 1/normalized/00_origin.png"
     )
     thin_3 = Path("outputs/pipeline/15234d05/Block 0/frame_detection/00_origin.png")
-
+    test = Path(
+        "outputs/79ad28287fab43c19b758ff1af49c160/Block 0/normalized/00_origin.png"
+    )
     # img_path = frame3_thin
     # img_path = thin5
-    # img_path = frame4_large
-    img_path = frame4_bold
+    img_path = frame4_large
+    # img_path = test
+    # img_path = frame4_bold
     # img_path = thin8frame
     # img_path = thin_3
     output_dir = Path("outputs", "frame_detection")

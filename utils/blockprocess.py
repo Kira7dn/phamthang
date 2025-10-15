@@ -557,8 +557,136 @@ def detect_frames_by_contours(
                     f"({child['area']/parent_area:.1%} of parent)"
                 )
     
-    # Remove spatially contained noise frames and clean up idx field
+    # Remove spatially contained noise frames
     frames = [f for i, f in enumerate(frames) if i not in frames_to_remove_spatial]
+    
+    # ============================================================
+    # PRIORITY 8: Merge or Remove overlapping frames
+    # ============================================================
+    # Strategy: 
+    # - If frames overlap significantly and are similar in size -> MERGE them
+    # - If one frame is much smaller and inside/overlapping -> REMOVE smaller one
+    # This handles both broken frame detection and corner artifacts
+    
+    def calculate_iou(frame1, frame2):
+        """Calculate Intersection over Union (IoU) between two frames."""
+        x1, y1, w1, h1 = frame1["x"], frame1["y"], frame1["w"], frame1["h"]
+        x2, y2, w2, h2 = frame2["x"], frame2["y"], frame2["w"], frame2["h"]
+        
+        # Calculate intersection
+        x_left = max(x1, x2)
+        y_top = max(y1, y2)
+        x_right = min(x1 + w1, x2 + w2)
+        y_bottom = min(y1 + h1, y2 + h2)
+        
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0, 0.0, 0.0  # No overlap - return 3 values
+        
+        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+        
+        # Calculate union
+        area1 = w1 * h1
+        area2 = w2 * h2
+        union_area = area1 + area2 - intersection_area
+        
+        iou = intersection_area / union_area if union_area > 0 else 0.0
+        
+        # Also calculate overlap ratio relative to smaller frame
+        smaller_area = min(area1, area2)
+        overlap_ratio = intersection_area / smaller_area if smaller_area > 0 else 0.0
+        
+        return iou, overlap_ratio, intersection_area
+    
+    def merge_frames(frame1, frame2):
+        """Merge two overlapping frames into a single bounding box."""
+        x1, y1, w1, h1 = frame1["x"], frame1["y"], frame1["w"], frame1["h"]
+        x2, y2, w2, h2 = frame2["x"], frame2["y"], frame2["w"], frame2["h"]
+        
+        # Calculate bounding box that contains both frames
+        x_min = min(x1, x2)
+        y_min = min(y1, y2)
+        x_max = max(x1 + w1, x2 + w2)
+        y_max = max(y1 + h1, y2 + h2)
+        
+        merged_w = x_max - x_min
+        merged_h = y_max - y_min
+        merged_area = merged_w * merged_h
+        
+        return {
+            "x": x_min,
+            "y": y_min,
+            "w": merged_w,
+            "h": merged_h,
+            "area": float(merged_area),
+            "aspect": float(max(merged_w, merged_h) / max(1, min(merged_w, merged_h))),
+            "fill_ratio": (frame1.get("fill_ratio", 0) + frame2.get("fill_ratio", 0)) / 2,
+            "merged": True,  # Mark as merged
+        }
+    
+    # Sort by area (largest first)
+    frames.sort(key=lambda r: r["area"], reverse=True)
+    
+    # Apply smart overlap handling
+    frames_to_keep = []
+    frames_merged = 0
+    frames_removed_by_overlap = 0
+    processed = set()  # Track which frames have been processed
+    
+    for i, frame in enumerate(frames):
+        if i in processed:
+            continue
+            
+        # Check against remaining unprocessed frames
+        merged_with_any = False
+        
+        for j in range(i + 1, len(frames)):
+            if j in processed:
+                continue
+                
+            other = frames[j]
+            iou, overlap_ratio, intersection = calculate_iou(frame, other)
+            
+            # Decision logic:
+            # MERGE if overlap > 80% of the smaller block
+            # Otherwise REMOVE the smaller block
+            
+            # overlap_ratio is already calculated as intersection / smaller_area
+            if overlap_ratio > 0.80:  # Overlap > 80% of smaller block
+                # MERGE: The two frames are likely parts of the same frame
+                merged_frame = merge_frames(frame, other)
+                logger.debug(
+                    f"Merging frames: {frame['w']}x{frame['h']} + {other['w']}x{other['h']} "
+                    f"-> {merged_frame['w']}x{merged_frame['h']} (overlap={overlap_ratio:.1%} of smaller)"
+                )
+                print(
+                    f"  🔗 Merged overlapping frames: {frame['w']}x{frame['h']} + {other['w']}x{other['h']} "
+                    f"-> {merged_frame['w']}x{merged_frame['h']} (overlap={overlap_ratio:.1%} of smaller block)"
+                )
+                frame = merged_frame  # Update current frame to merged one
+                processed.add(j)
+                frames_merged += 1
+                merged_with_any = True
+                # Continue checking for more frames to merge
+                
+            elif overlap_ratio > 0.0:  # Has overlap but < 80%
+                # REMOVE smaller frame (it's likely noise or artifact)
+                logger.debug(
+                    f"Removing overlapping frame: {other['w']}x{other['h']} "
+                    f"(overlap={overlap_ratio:.1%} < 80% of smaller block)"
+                )
+                print(
+                    f"  ⚠ Removed overlapping frame: {other['w']}x{other['h']}px "
+                    f"(overlap={overlap_ratio:.1%} of smaller block, threshold=80%)"
+                )
+                processed.add(j)
+                frames_removed_by_overlap += 1
+        
+        frames_to_keep.append(frame)
+        processed.add(i)
+    
+    frames = frames_to_keep
+    
+    # Clean up idx field
     for frame in frames:
         frame.pop("idx", None)  # Remove idx, not needed by caller
     
@@ -568,14 +696,16 @@ def detect_frames_by_contours(
         f"{filtered_stats['bad_fill']} bad fill ratio, "
         f"{filtered_stats['parent_boundary']} parent boundaries"
     )
+    if frames_merged > 0:
+        print(f"  Merged: {frames_merged} frames combined")
+    if frames_removed_by_overlap > 0:
+        print(f"  Removed: {frames_removed_by_overlap} overlapping frames")
 
     if debug_info:
         print("  Debug - Top filtered contours:")
         for info in debug_info[:5]:
             print(info)
 
-    # Sort by area (largest first)
-    frames.sort(key=lambda r: r["area"], reverse=True)
     return frames
 
 

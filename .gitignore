@@ -16,11 +16,23 @@ dev-debug.log
 
 # Dependency directories
 node_modules/
+__pycache__/
+
+# AWS Lambda deployment
+.aws-sam/
+samconfig.toml
 
 # Environment variables
 .env
 .env.*
 !.env.example
+
+# AWS credentials (NEVER commit these!)
+secret
+secrets/
+*.pem
+*.key
+credentials
 
 # Editor directories and files
 .idea/

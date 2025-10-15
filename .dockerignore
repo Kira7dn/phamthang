@@ -1,9 +1,12 @@
 # Git
 .git
 .gitignore
+.gitattributes
 
 # Docker
 .dockerignore
+Dockerfile*
+docker-compose*.yml
 
 # Python
 __pycache__
@@ -49,11 +52,18 @@ result/
 .windsurfrules
 
 # Documentation and examples
+README*.md
+CHANGELOG*.md
+CONTRIBUTING*.md
+LICENSE*
+*.md
 *MIGRATION*.md
 *AUDIO_MIGRATION*.md
 input_sample*.json
 *_sample.*
 *_example.*
+docs/
+doc/
 
 # Temporary files
 tmp*/

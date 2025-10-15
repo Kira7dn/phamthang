@@ -75,8 +75,8 @@ class OCRAgent:
         self,
         output_dir: Optional[Path] = None,
         # detect_model_id: str = "google-gla:gemini-2.5-flash-lite",
-        detect_model_id: str = "google-gla:gemini-2.0-flash",
-        # detect_model_id: str = "openai:gpt-4o",
+        # detect_model_id: str = "google-gla:gemini-2.0-flash",
+        detect_model_id: str = "openai:gpt-4o",
     ) -> None:
         self.output_dir = output_dir
         self.detect_model_id = detect_model_id

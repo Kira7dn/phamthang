@@ -1,0 +1,119 @@
+# Same as .dockerignore but optimized for Lambda
+# Use with: docker build -f Dockerfile.lambda --dockerignore .dockerignore.lambda
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker files
+.dockerignore*
+Dockerfile
+docker-compose*.yml
+docker/
+# Keep lambda-entrypoint.sh (needed for Lambda)
+!lambda-entrypoint.sh
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.pytest_cache
+.mypy_cache
+.hypothesis
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Development assets (CRITICAL for Lambda - reduce image size)
+example/
+outputs/
+assets/
+models/
+deploy.sh
+deploy-lambda.sh
+
+# Development files
+test/
+tests/
+test_*.py
+*_test.py
+result/
+*.mp4
+*.mp3
+*.wav
+*.avi
+
+# Development tools
+.cursor/
+.roo/
+.taskmaster/
+.roomodes
+.windsurfrules
+
+# Documentation (Lambda doesn't need these)
+README*.md
+CHANGELOG*.md
+CONTRIBUTING*.md
+LICENSE*
+*.md
+docs/
+doc/
+DOCKER_OPTIMIZATION.md
+AWS_LAMBDA_DEPLOYMENT.md
+
+# Temporary files
+tmp*/
+temp/
+*.tmp
+*.temp
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# Environment files (use Lambda env vars instead)
+.env*
+!.env.example
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs
+*.log
+logs/
+
+# Media files (if not needed in Lambda)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.webp
+*.svg
+*.ico

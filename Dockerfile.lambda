@@ -1,0 +1,67 @@
+# ==========================================
+# Stage 1: Build dependencies
+# ==========================================
+FROM public.ecr.aws/lambda/python:3.12 AS builder
+
+WORKDIR /app
+
+# Cài build deps cho OpenCV/Pillow (Amazon Linux 2023 dùng dnf)
+RUN dnf install -y gcc gcc-c++ make pkgconfig \
+    libjpeg-turbo-devel zlib-devel libpng-devel libtiff-devel freetype-devel \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Copy requirements
+COPY app/requirements.prod.txt .
+
+# Cài dependencies vào /install prefix để copy riêng
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir --prefix=/install -r requirements.prod.txt \
+    && rm -rf /root/.cache/pip \
+    && python3 -c "import pathlib, shutil; [shutil.rmtree(p) for p in pathlib.Path('/install').rglob('__pycache__')]" 2>/dev/null || true \
+    && python3 -c "import pathlib; [p.unlink() for p in pathlib.Path('/install').rglob('*.py[co]')]" 2>/dev/null || true
+
+
+# ==========================================
+# Stage 2: Runtime
+# ==========================================
+FROM public.ecr.aws/lambda/python:3.12
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Cài runtime libs tối thiểu (cho opencv-headless)
+RUN dnf install -y \
+    libjpeg-turbo libpng libtiff freetype \
+    mesa-libGL glib2 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Copy Python packages từ builder
+COPY --from=builder /install /var/lang
+
+# Copy entrypoint script first
+COPY lambda-entrypoint.sh /lambda-entrypoint.sh
+RUN chmod +x /lambda-entrypoint.sh
+
+# Copy toàn bộ code ứng dụng (PYTHONDONTWRITEBYTECODE prevents .pyc creation)
+COPY . ${LAMBDA_TASK_ROOT}
+
+# Tải và cài AWS Lambda Web Adapter (binary trực tiếp, không phải zip)
+RUN mkdir -p /opt/extensions \
+    && curl -Lo /opt/extensions/lambda-adapter \
+    https://github.com/awslabs/aws-lambda-web-adapter/releases/download/v0.8.4/lambda-adapter \
+    && chmod +x /opt/extensions/lambda-adapter
+
+# Thiết lập biến môi trường
+ENV PYTHONPATH=${LAMBDA_TASK_ROOT} \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8080 \
+    AWS_LWA_INVOKE_MODE=response_stream \
+    AWS_LWA_READINESS_CHECK_PORT=8080
+
+# Expose port for local testing
+EXPOSE 8080
+
+# Set handler for Lambda (points to entrypoint script)
+CMD ["/lambda-entrypoint.sh"]
