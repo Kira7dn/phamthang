@@ -11,7 +11,7 @@ from pydantic_ai import Agent, Tool
 from dotenv import load_dotenv
 
 from app.agent.panel_verifier import AggregatedResult
-from utils.build_item_list import BuildItemOutput, build_item_list
+from app.tools.build_item_list import BuildItemOutput, build_item_list
 
 
 logger = logging.getLogger("app.agent.build_item")

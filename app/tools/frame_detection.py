@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from utils.blockprocess import (
+from app.tools.blockprocess import (
     apply_otsu_threshold,
     connect_lines,
     detect_frames_by_contours,
@@ -29,8 +29,8 @@ from utils.blockprocess import (
     remove_text_regions,
     to_grayscale,
 )
-from utils.normalize_image import normalize_image
-from utils.image_process import ImagePipeline
+from app.tools.normalize_image import normalize_image
+from app.tools.image_process import ImagePipeline
 
 # Constants for frame detection
 MIN_FRAME_PERCENTAGE = 0.02  # 2% of image area
@@ -183,12 +183,10 @@ if __name__ == "__main__":
         "outputs/67f6ef3dadba4dc6b84c23c66e078b73/Block 1/normalized/00_origin.png"
     )
     thin_3 = Path("outputs/pipeline/15234d05/Block 0/frame_detection/00_origin.png")
-    test = Path(
-        "outputs/79ad28287fab43c19b758ff1af49c160/Block 0/normalized/00_origin.png"
-    )
+    test = Path("outputs/pipeline/ae436b30/Block 0/normalized/00_origin.png")
     # img_path = frame3_thin
-    # img_path = thin5
-    img_path = frame4_large
+    img_path = thin5
+    # img_path = test
     # img_path = test
     # img_path = frame4_bold
     # img_path = thin8frame

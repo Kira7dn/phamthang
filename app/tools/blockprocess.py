@@ -97,17 +97,18 @@ def remove_text_regions(binary: np.ndarray) -> np.ndarray:
         x_min, y_min = all_points.min(axis=0)[0]
         x_max, y_max = all_points.max(axis=0)[0]
 
-        # Add larger margin to remove dimension text that's close to edges
-        margin = 20  # Increased to catch text near edges
+        # Add margin to remove dimension text that's close to edges
+        margin = 0  # Reduced to avoid removing important frame parts
         x_min = max(0, x_min - margin)
         y_min = max(0, y_min - margin)
         x_max = min(w, x_max + margin)
         y_max = min(h, y_max + margin)
 
         # Clear regions outside main area (including dimension text)
-        # ONLY remove outer margins, do NOT touch content area borders
-        cleaned[:y_min, :] = 0  # Top margin
-        cleaned[y_max:, :] = 0  # Bottom margin
+        # CRITICAL: ONLY remove LEFT/RIGHT margins to preserve horizontal frame edges
+        # Do NOT remove top/bottom margins as they may contain frame edges
+        # cleaned[:y_min, :] = 0  # Top margin - DISABLED to preserve top edges
+        # cleaned[y_max:, :] = 0  # Bottom margin - DISABLED to preserve bottom edges
         cleaned[:, :x_min] = 0  # Left margin
         cleaned[:, x_max:] = 0  # Right margin
 
@@ -120,10 +121,18 @@ def remove_text_regions(binary: np.ndarray) -> np.ndarray:
         x, y, w_comp, h_comp, area = stats[i]
 
         # Remove small compact regions (likely text)
+        # BUT preserve horizontal/vertical lines (high aspect ratio)
         is_small = w_comp < TEXT_MAX_SIZE and h_comp < TEXT_MAX_SIZE
         is_compact = area < TEXT_MAX_AREA
-
-        if is_small and is_compact:
+        
+        # Calculate aspect ratio
+        aspect_ratio = max(w_comp, h_comp) / max(1, min(w_comp, h_comp))
+        
+        # CRITICAL: Only remove if aspect ratio is LOW (text-like)
+        # High aspect ratio means it's a line (horizontal or vertical edge of frame)
+        is_text_like = aspect_ratio < 5  # Text has low aspect ratio
+        
+        if is_small and is_compact and is_text_like:
             cleaned[labels == i] = 0
 
     return cleaned
@@ -323,14 +332,18 @@ def reconnect_broken_frames(binary: np.ndarray) -> np.ndarray:
 
     # Step 4: CRITICAL - Close corner gaps with larger square kernel
     # This specifically targets broken corners from text removal
-    kernel_square = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    kernel_square = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     reconnected = cv2.morphologyEx(
-        combined, cv2.MORPH_CLOSE, kernel_square, iterations=4
+        combined, cv2.MORPH_CLOSE, kernel_square, iterations=6
     )
 
     # Step 5: Dilate to make lines thicker and more continuous
     kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     reconnected = cv2.dilate(reconnected, kernel_dilate, iterations=2)
+    
+    # Step 6: Final corner filling - one more close to ensure corners are solid
+    kernel_corner = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    reconnected = cv2.morphologyEx(reconnected, cv2.MORPH_CLOSE, kernel_corner, iterations=2)
 
     return reconnected
 
@@ -366,6 +379,16 @@ def detect_frames_by_contours(
     if all_areas:
         print(f"  Top 5 contour areas: {all_areas[:5]}")
         print(f"  Area range: {all_areas[0]:.0f} -> {all_areas[-1]:.0f}")
+    
+    # Print ALL contours with bounding box info for debugging
+    print("\n  === ALL CONTOURS (before filtering) ===")
+    for idx, cnt in enumerate(contours):
+        x, y, rect_w, rect_h = cv2.boundingRect(cnt)
+        bbox_area = rect_w * rect_h
+        contour_area = cv2.contourArea(cnt)
+        fill_ratio = contour_area / bbox_area if bbox_area > 0 else 0
+        print(f"    Contour {idx}: bbox={rect_w}x{rect_h}, bbox_area={bbox_area:.0f}, "
+              f"contour_area={contour_area:.0f}, fill_ratio={fill_ratio:.2f}")
 
     frames = []
     filtered_stats = {
@@ -448,16 +471,17 @@ def detect_frames_by_contours(
     # Rule: If sum(children) >= 30% parent -> remove parent
     #       If sum(children) < 30% parent -> remove children
     import logging
+
     logger = logging.getLogger(__name__)
-    
+
     # Build index map for quick lookup
     idx_to_frame = {frame["idx"]: i for i, frame in enumerate(frames)}
     frames_to_remove = set()
-    
+
     for i, frame in enumerate(frames):
         if i in frames_to_remove:
             continue
-            
+
         idx = frame["idx"]
         # Check if this frame has children in hierarchy
         if hierarchy is not None and hierarchy[idx][2] != -1:
@@ -465,23 +489,25 @@ def detect_frames_by_contours(
             child_idx = hierarchy[idx][2]
             children_indices = []
             total_children_area = 0
-            
+
             while child_idx != -1:
                 if child_idx in idx_to_frame:
                     child_frame_idx = idx_to_frame[child_idx]
                     children_indices.append(child_frame_idx)
                     total_children_area += frames[child_frame_idx]["area"]
                 child_idx = hierarchy[child_idx][0]  # Next sibling
-            
+
             if children_indices:
                 parent_area = frame["area"]
-                children_ratio = total_children_area / parent_area if parent_area > 0 else 0
-                
+                children_ratio = (
+                    total_children_area / parent_area if parent_area > 0 else 0
+                )
+
                 logger.debug(
                     f"Parent-child check: parent {frame['w']}x{frame['h']}, "
                     f"{len(children_indices)} children, ratio={children_ratio:.1%}"
                 )
-                
+
                 if children_ratio >= 0.30:
                     # Children occupy >= 30% -> remove parent (it's a boundary)
                     frames_to_remove.add(i)
@@ -500,36 +526,40 @@ def detect_frames_by_contours(
                             f"  → Removing child noise: {child['w']}x{child['h']} "
                             f"({child['area']/parent_area:.1%} of parent)"
                         )
-    
+
     # Remove marked frames
     frames = [f for i, f in enumerate(frames) if i not in frames_to_remove]
-    
+
     # ============================================================
     # PRIORITY 7: Spatial containment check (fallback)
     # ============================================================
     # Some noise frames may not be in hierarchy but are spatially inside
     # Apply same parent-child logic: >= 30% remove parent, < 30% remove children
-    
+
     # Build spatial parent-child relationships
     spatial_parents = {}  # parent_idx -> [child_indices]
     for i, frame in enumerate(frames):
         x1, y1, w1, h1 = frame["x"], frame["y"], frame["w"], frame["h"]
-        
+
         for j, other in enumerate(frames):
             if i == j:
                 continue
             x2, y2, w2, h2 = other["x"], other["y"], other["w"], other["h"]
-            
+
             # Check if frame is completely inside other (with small margin)
             margin = 5
-            if (x1 >= x2 - margin and y1 >= y2 - margin and 
-                x1 + w1 <= x2 + w2 + margin and y1 + h1 <= y2 + h2 + margin):
+            if (
+                x1 >= x2 - margin
+                and y1 >= y2 - margin
+                and x1 + w1 <= x2 + w2 + margin
+                and y1 + h1 <= y2 + h2 + margin
+            ):
                 # Frame i is spatially inside frame j (j is parent of i)
                 if j not in spatial_parents:
                     spatial_parents[j] = []
                 spatial_parents[j].append(i)
                 break  # Only one parent per child
-    
+
     # Apply parent-child logic
     frames_to_remove_spatial = set()
     for parent_idx, children_indices in spatial_parents.items():
@@ -537,12 +567,12 @@ def detect_frames_by_contours(
         parent_area = parent["area"]
         total_children_area = sum(frames[c]["area"] for c in children_indices)
         children_ratio = total_children_area / parent_area if parent_area > 0 else 0
-        
+
         logger.debug(
             f"Spatial parent-child: parent {parent['w']}x{parent['h']}, "
             f"{len(children_indices)} children, ratio={children_ratio:.1%}"
         )
-        
+
         if children_ratio >= 0.30:
             # Remove parent (it's a boundary)
             frames_to_remove_spatial.add(parent_idx)
@@ -556,62 +586,62 @@ def detect_frames_by_contours(
                     f"  → Removing spatial child noise: {child['w']}x{child['h']} "
                     f"({child['area']/parent_area:.1%} of parent)"
                 )
-    
+
     # Remove spatially contained noise frames
     frames = [f for i, f in enumerate(frames) if i not in frames_to_remove_spatial]
-    
+
     # ============================================================
     # PRIORITY 8: Merge or Remove overlapping frames
     # ============================================================
-    # Strategy: 
+    # Strategy:
     # - If frames overlap significantly and are similar in size -> MERGE them
     # - If one frame is much smaller and inside/overlapping -> REMOVE smaller one
     # This handles both broken frame detection and corner artifacts
-    
+
     def calculate_iou(frame1, frame2):
         """Calculate Intersection over Union (IoU) between two frames."""
         x1, y1, w1, h1 = frame1["x"], frame1["y"], frame1["w"], frame1["h"]
         x2, y2, w2, h2 = frame2["x"], frame2["y"], frame2["w"], frame2["h"]
-        
+
         # Calculate intersection
         x_left = max(x1, x2)
         y_top = max(y1, y2)
         x_right = min(x1 + w1, x2 + w2)
         y_bottom = min(y1 + h1, y2 + h2)
-        
+
         if x_right < x_left or y_bottom < y_top:
             return 0.0, 0.0, 0.0  # No overlap - return 3 values
-        
+
         intersection_area = (x_right - x_left) * (y_bottom - y_top)
-        
+
         # Calculate union
         area1 = w1 * h1
         area2 = w2 * h2
         union_area = area1 + area2 - intersection_area
-        
+
         iou = intersection_area / union_area if union_area > 0 else 0.0
-        
+
         # Also calculate overlap ratio relative to smaller frame
         smaller_area = min(area1, area2)
         overlap_ratio = intersection_area / smaller_area if smaller_area > 0 else 0.0
-        
+
         return iou, overlap_ratio, intersection_area
-    
+
     def merge_frames(frame1, frame2):
         """Merge two overlapping frames into a single bounding box."""
         x1, y1, w1, h1 = frame1["x"], frame1["y"], frame1["w"], frame1["h"]
         x2, y2, w2, h2 = frame2["x"], frame2["y"], frame2["w"], frame2["h"]
-        
+
         # Calculate bounding box that contains both frames
         x_min = min(x1, x2)
         y_min = min(y1, y2)
         x_max = max(x1 + w1, x2 + w2)
         y_max = max(y1 + h1, y2 + h2)
-        
+
         merged_w = x_max - x_min
         merged_h = y_max - y_min
         merged_area = merged_w * merged_h
-        
+
         return {
             "x": x_min,
             "y": y_min,
@@ -619,37 +649,38 @@ def detect_frames_by_contours(
             "h": merged_h,
             "area": float(merged_area),
             "aspect": float(max(merged_w, merged_h) / max(1, min(merged_w, merged_h))),
-            "fill_ratio": (frame1.get("fill_ratio", 0) + frame2.get("fill_ratio", 0)) / 2,
+            "fill_ratio": (frame1.get("fill_ratio", 0) + frame2.get("fill_ratio", 0))
+            / 2,
             "merged": True,  # Mark as merged
         }
-    
+
     # Sort by area (largest first)
     frames.sort(key=lambda r: r["area"], reverse=True)
-    
+
     # Apply smart overlap handling
     frames_to_keep = []
     frames_merged = 0
     frames_removed_by_overlap = 0
     processed = set()  # Track which frames have been processed
-    
+
     for i, frame in enumerate(frames):
         if i in processed:
             continue
-            
+
         # Check against remaining unprocessed frames
         merged_with_any = False
-        
+
         for j in range(i + 1, len(frames)):
             if j in processed:
                 continue
-                
+
             other = frames[j]
             iou, overlap_ratio, intersection = calculate_iou(frame, other)
-            
+
             # Decision logic:
             # MERGE if overlap > 80% of the smaller block
             # Otherwise REMOVE the smaller block
-            
+
             # overlap_ratio is already calculated as intersection / smaller_area
             if overlap_ratio > 0.80:  # Overlap > 80% of smaller block
                 # MERGE: The two frames are likely parts of the same frame
@@ -667,7 +698,7 @@ def detect_frames_by_contours(
                 frames_merged += 1
                 merged_with_any = True
                 # Continue checking for more frames to merge
-                
+
             elif overlap_ratio > 0.0:  # Has overlap but < 80%
                 # REMOVE smaller frame (it's likely noise or artifact)
                 logger.debug(
@@ -680,16 +711,16 @@ def detect_frames_by_contours(
                 )
                 processed.add(j)
                 frames_removed_by_overlap += 1
-        
+
         frames_to_keep.append(frame)
         processed.add(i)
-    
+
     frames = frames_to_keep
-    
+
     # Clean up idx field
     for frame in frames:
         frame.pop("idx", None)  # Remove idx, not needed by caller
-    
+
     print(
         f"  Filtered: {filtered_stats['too_small']} too small, "
         f"{filtered_stats['bad_aspect']} bad aspect, "
@@ -702,8 +733,8 @@ def detect_frames_by_contours(
         print(f"  Removed: {frames_removed_by_overlap} overlapping frames")
 
     if debug_info:
-        print("  Debug - Top filtered contours:")
-        for info in debug_info[:5]:
+        print(f"  Debug - ALL {len(debug_info)} filtered contours:")
+        for info in debug_info:
             print(info)
 
     return frames

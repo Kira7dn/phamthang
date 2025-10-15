@@ -56,9 +56,12 @@ def least_squares_scale(pxs: List[float], matched_nums: List[float]) -> Optional
 # Frame normalization (simple deterministic grouping)
 # ---------------------------
 def normalize_frames(
-    frames: List[Dict[str, Any]], tolerance_px: int = 8
+    frames: List[Dict[str, Any]], tolerance_px: int = 5
 ) -> List[Dict[str, Any]]:
     """
+    ENHANCED: Đồng bộ pixel dimensions khi chênh lệch không đáng kể.
+    Ví dụ: [205, 204, 206, 205] → normalize về 205 (median/average)
+
     Simple clustering/grouping for normalized_w, normalized_h, row_group, col_group.
     Does not change original list but returns new list of frames (copied dicts).
     """
@@ -66,7 +69,7 @@ def normalize_frames(
         return frames
     frames_copy = [dict(f) for f in frames]
 
-    # width groups
+    # width groups - CHẶT CHẼ HƠN với tolerance nhỏ hơn
     width_groups = []
     for f in frames_copy:
         w = float(f.get("w", 0))
@@ -74,17 +77,24 @@ def normalize_frames(
         for g in width_groups:
             if abs(w - g["rep"]) <= tolerance_px:
                 g["frames"].append(f)
-                g["rep"] = sum(float(x["w"]) for x in g["frames"]) / len(g["frames"])
+                # Update representative as median (more robust than mean)
+                g["widths"] = g.get("widths", []) + [w]
+                g["rep"] = sorted(g["widths"])[len(g["widths"]) // 2]  # median
                 placed = True
                 break
         if not placed:
-            width_groups.append({"rep": w, "frames": [f]})
+            width_groups.append({"rep": w, "frames": [f], "widths": [w]})
+
+    # Assign normalized_w using median of group
     for g in width_groups:
-        norm_w = int(round(g["rep"]))
+        # Use median để robust hơn với outliers
+        widths = sorted(g["widths"])
+        norm_w = int(round(widths[len(widths) // 2]))
         for fr in g["frames"]:
             fr["normalized_w"] = norm_w
+        logger.debug(f"Width group: {widths} → normalized to {norm_w}")
 
-    # height groups
+    # height groups - CHẶT CHẼ HƠN
     height_groups = []
     for f in frames_copy:
         h = float(f.get("h", 0))
@@ -92,15 +102,20 @@ def normalize_frames(
         for g in height_groups:
             if abs(h - g["rep"]) <= tolerance_px:
                 g["frames"].append(f)
-                g["rep"] = sum(float(x["h"]) for x in g["frames"]) / len(g["frames"])
+                g["heights"] = g.get("heights", []) + [h]
+                g["rep"] = sorted(g["heights"])[len(g["heights"]) // 2]  # median
                 placed = True
                 break
         if not placed:
-            height_groups.append({"rep": h, "frames": [f]})
+            height_groups.append({"rep": h, "frames": [f], "heights": [h]})
+
+    # Assign normalized_h using median of group
     for g in height_groups:
-        norm_h = int(round(g["rep"]))
+        heights = sorted(g["heights"])
+        norm_h = int(round(heights[len(heights) // 2]))
         for fr in g["frames"]:
             fr["normalized_h"] = norm_h
+        logger.debug(f"Height group: {heights} → normalized to {norm_h}")
 
     # row groups by y
     row_groups = []
@@ -135,6 +150,26 @@ def normalize_frames(
     for idx, g in enumerate(col_groups):
         for fr in g["frames"]:
             fr["col_group"] = idx
+
+    # ENFORCE CONSISTENCY: Cùng col → same normalized_w
+    for col_idx, col_g in enumerate(col_groups):
+        col_frames = col_g["frames"]
+        if len(col_frames) > 1:
+            # Take average or median width
+            widths = [f.get("normalized_w", f.get("w", 0)) for f in col_frames]
+            avg_w = int(round(sum(widths) / len(widths)))
+            for fr in col_frames:
+                fr["normalized_w"] = avg_w
+
+    # ENFORCE CONSISTENCY: Cùng row → same normalized_h
+    for row_idx, row_g in enumerate(row_groups):
+        row_frames = row_g["frames"]
+        if len(row_frames) > 1:
+            # Take average or median height
+            heights = [f.get("normalized_h", f.get("h", 0)) for f in row_frames]
+            avg_h = int(round(sum(heights) / len(heights)))
+            for fr in row_frames:
+                fr["normalized_h"] = avg_h
 
     logger.debug(
         f"normalize_frames: widths={len(width_groups)}, heights={len(height_groups)}, rows={len(row_groups)}, cols={len(col_groups)}"
@@ -248,6 +283,49 @@ def estimate_scale_ransac(
 
 
 # ---------------------------
+# Detect frame layout (horizontal row vs vertical column)
+# ---------------------------
+def detect_layout(frames: List[Dict[str, Any]]) -> str:
+    """
+    Detect if frames are arranged horizontally (same row) or vertically (same column).
+    Returns: 'horizontal', 'vertical', or 'mixed'
+
+    Logic:
+    - If frames have similar Y positions and different X → horizontal (same row)
+    - If frames have similar X positions and different Y → vertical (same column)
+    - Otherwise → mixed
+    """
+    if len(frames) <= 1:
+        return "mixed"
+
+    # Get frame positions
+    positions = [(f["x"], f["y"], f["w"], f["h"]) for f in frames]
+
+    # Calculate variance in X and Y positions
+    xs = [x for x, y, w, h in positions]
+    ys = [y for x, y, w, h in positions]
+
+    x_range = max(xs) - min(xs)
+    y_range = max(ys) - min(ys)
+
+    # Calculate average frame dimensions
+    avg_w = sum(w for x, y, w, h in positions) / len(positions)
+    avg_h = sum(h for x, y, w, h in positions) / len(positions)
+
+    # Horizontal: Y positions similar, X positions spread out
+    # Vertical: X positions similar, Y positions spread out
+    y_threshold = avg_h * 0.3  # Allow 30% variation in Y for horizontal
+    x_threshold = avg_w * 0.3  # Allow 30% variation in X for vertical
+
+    if y_range < y_threshold and x_range > avg_w:
+        return "horizontal"  # Same row
+    elif x_range < x_threshold and y_range > avg_h:
+        return "vertical"  # Same column
+    else:
+        return "mixed"
+
+
+# ---------------------------
 # Generate outer candidates per frame (top-K)
 # ---------------------------
 def generate_outer_candidates(
@@ -260,37 +338,160 @@ def generate_outer_candidates(
     """
     For each frame, compute est_mm and produce top-K candidate numbers for width and height.
     STRICT MODE: Only return actual OCR numbers, NO fallback estimates.
+
+    ENHANCED LOGIC (dimension.md):
+    - Analyze row_group/col_group structure
+    - Cùng col: width dùng chung (freq LOW), height đầy đủ (freq HIGH)
+    - Cùng row: width đầy đủ (freq HIGH), height dùng chung (freq LOW)
+
     Returns list aligned with frames: {'w_cands': [(val, rel, conf), ...], 'h_cands': [...], 'est_mm': {...}}
     """
+    # Count frequency of each number
+    freq = Counter(numbers)
+    num_frames = len(frames)
+
+    # Analyze row/col structure
+    row_groups = defaultdict(list)
+    col_groups = defaultdict(list)
+    for idx, f in enumerate(frames):
+        row = f.get("row_group")
+        col = f.get("col_group")
+        if row is not None:
+            row_groups[row].append(idx)
+        if col is not None:
+            col_groups[col].append(idx)
+
+    num_rows = len(row_groups)
+    num_cols = len(col_groups)
+
+    # Determine layout pattern
+    # If num_cols > num_rows → likely horizontal (frames spread across columns)
+    # If num_rows > num_cols → likely vertical (frames spread across rows)
+    # If equal → mixed
+    if num_cols > num_rows and num_cols >= 3:
+        layout = "horizontal"
+        logger.info(f"Layout: horizontal (rows={num_rows}, cols={num_cols})")
+    elif num_rows > num_cols and num_rows >= 3:
+        layout = "vertical"
+        logger.info(f"Layout: vertical (rows={num_rows}, cols={num_cols})")
+    else:
+        layout = "mixed"
+        logger.info(f"Layout: mixed (rows={num_rows}, cols={num_cols})")
+
     unique_numbers = sorted(list(set(numbers)), reverse=True)
     frames_cands = []
-    for f in frames:
+    for idx, f in enumerate(frames):
         fw_px = float(f.get("normalized_w", f.get("w", 0)))
         fh_px = float(f.get("normalized_h", f.get("h", 0)))
         est_w = fw_px * scale
         est_h = fh_px * scale
 
+        # Get frame's row/col info
+        frame_row = f.get("row_group")
+        frame_col = f.get("col_group")
+        frames_in_same_row = (
+            len(row_groups.get(frame_row, [])) if frame_row is not None else 1
+        )
+        frames_in_same_col = (
+            len(col_groups.get(frame_col, [])) if frame_col is not None else 1
+        )
+
         w_scores = []
         for n in unique_numbers:
             rel = abs(n - est_w) / n if n != 0 else float("inf")
-            w_scores.append((n, rel))
+            n_freq = freq.get(n, 1)
+
+            # ENHANCED FREQUENCY LOGIC (dimension.md):
+            # Cùng col → width dùng chung (expect LOW freq)
+            # Cùng row → width đầy đủ (expect HIGH freq ≈ frames_in_same_row)
+            freq_bonus = 0.0
+
+            if layout == "horizontal":
+                # Horizontal: frames spread across columns (each frame different col)
+                # Width should vary → expect freq ≈ num_cols or num_frames
+                if n_freq >= num_cols * 0.7 or n_freq >= num_frames * 0.6:
+                    freq_bonus = -0.70  # VERY STRONG boost - frequency > accuracy
+                    # Tiebreaker: prefer LARGER numbers when frequency is high (conservative)
+                    freq_bonus -= n / 10000.0  # Small bonus proportional to value size
+            elif layout == "vertical":
+                # Vertical: frames spread across rows (stacked vertically)
+                # Width dùng chung → expect LOW freq (1 hoặc số col groups)
+                if n_freq <= num_cols * 1.2 and n_freq <= 3:
+                    freq_bonus = -0.20  # Boost for shared width
+            else:
+                # Mixed: use frame-specific logic
+                # If this frame shares col with others → width should be shared (LOW freq)
+                if frames_in_same_col > 1:
+                    if n_freq <= frames_in_same_col * 1.2:
+                        freq_bonus = -0.15
+                # If this frame shares row with others → width should vary (HIGH freq)
+                elif frames_in_same_row > 1:
+                    if n_freq >= frames_in_same_row * 0.7:
+                        freq_bonus = -0.15
+
+            # Adjusted score: lower is better
+            adjusted_rel = rel + freq_bonus
+            w_scores.append((n, adjusted_rel, rel))  # Store both adjusted and original
+
+            # Debug log for layout-aware scoring
+            if (
+                logger.isEnabledFor(logging.DEBUG)
+                and layout == "horizontal"
+                and num_frames >= 5
+            ):
+                logger.debug(
+                    f"Width candidate: n={n}, freq={n_freq}, rel={rel:.3f}, "
+                    f"freq_bonus={freq_bonus:.3f}, adjusted_rel={adjusted_rel:.3f}"
+                )
         w_scores.sort(key=lambda x: (x[1], -x[0]))
 
         h_scores = []
         for n in unique_numbers:
             rel = abs(n - est_h) / n if n != 0 else float("inf")
-            h_scores.append((n, rel))
+            n_freq = freq.get(n, 1)
+
+            # ENHANCED FREQUENCY LOGIC (dimension.md):
+            # Cùng row → height dùng chung (expect LOW freq)
+            # Cùng col → height đầy đủ (expect HIGH freq ≈ frames_in_same_col)
+            freq_bonus = 0.0
+
+            if layout == "vertical":
+                # Vertical: frames spread across rows (stacked)
+                # Height should vary → expect freq ≈ num_rows or num_frames
+                if n_freq >= num_rows * 0.7 or n_freq >= num_frames * 0.6:
+                    freq_bonus = -0.70  # VERY STRONG boost - frequency > accuracy
+            elif layout == "horizontal":
+                # Horizontal: frames spread across columns (same row)
+                # Height dùng chung → expect LOW freq (1 hoặc số row groups)
+                if n_freq <= num_rows * 1.2 and n_freq <= 3:
+                    freq_bonus = -0.20  # Boost for shared height
+            else:
+                # Mixed: use frame-specific logic
+                # If this frame shares row with others → height should be shared (LOW freq)
+                if frames_in_same_row > 1:
+                    if n_freq <= frames_in_same_row * 1.2:
+                        freq_bonus = -0.15
+                # If this frame shares col with others → height should vary (HIGH freq)
+                elif frames_in_same_col > 1:
+                    if n_freq >= frames_in_same_col * 0.7:
+                        freq_bonus = -0.15
+
+            # Adjusted score
+            adjusted_rel = rel + freq_bonus
+            h_scores.append((n, adjusted_rel, rel))
         h_scores.sort(key=lambda x: (x[1], -x[0]))
 
         # STRICT: Only take actual OCR numbers, expand k to ensure coverage
         w_cands = []
         h_cands = []
-        for n, rel in w_scores[: min(k * 2, len(w_scores))]:
-            conf = max(0.0, 1.0 - min(rel, rel_tol) / rel_tol)
-            w_cands.append((float(n), rel, conf))
-        for n, rel in h_scores[: min(k * 2, len(h_scores))]:
-            conf = max(0.0, 1.0 - min(rel, rel_tol) / rel_tol)
-            h_cands.append((float(n), rel, conf))
+        for n, adjusted_rel, orig_rel in w_scores[: min(k * 2, len(w_scores))]:
+            # Use original rel for confidence calculation
+            conf = max(0.0, 1.0 - min(orig_rel, rel_tol) / rel_tol)
+            w_cands.append((float(n), orig_rel, conf))
+        for n, adjusted_rel, orig_rel in h_scores[: min(k * 2, len(h_scores))]:
+            # Use original rel for confidence calculation
+            conf = max(0.0, 1.0 - min(orig_rel, rel_tol) / rel_tol)
+            h_cands.append((float(n), orig_rel, conf))
 
         # NO FALLBACK: Do not add estimate, force selection from OCR only
 
@@ -354,8 +555,17 @@ def find_inner_heights_improved(
                     if diff / target_height <= tolerance:
                         cand = [smallest, m, m, smallest]
                         conf = 1.0 - (diff / (target_height * tolerance + 1e-9))
-                        freq_m = freq.get(m, 1)
-                        score = diff - 0.5 * freq_m
+                        # NO frequency bonus - pure accuracy
+                        score = diff
+                        heuristic_candidates.append((score, cand, conf))
+
+                # THREE equal middle [small, M, M, M, small]
+                for m in nums_desc:
+                    diff = abs(3 * m - remaining)
+                    if diff / target_height <= tolerance:
+                        cand = [smallest, m, m, m, smallest]
+                        conf = 1.0 - (diff / (target_height * tolerance + 1e-9))
+                        score = diff
                         heuristic_candidates.append((score, cand, conf))
 
                 # multiple equal middle (e.g., [100, 517, 517, 517, 517, 100])
@@ -367,8 +577,8 @@ def find_inner_heights_improved(
                         if diff / target_height <= tolerance:
                             cand = [smallest] + [m] * count + [smallest]
                             conf = 1.0 - (diff / (target_height * tolerance + 1e-9))
-                            freq_m = freq.get(m, 1)
-                            score = diff - 0.5 * freq_m
+                            # NO frequency bonus - pure accuracy
+                            score = diff
                             heuristic_candidates.append((score, cand, conf))
 
     # Return best heuristic candidate ONLY if it's a perfect or near-perfect match
@@ -380,9 +590,9 @@ def find_inner_heights_improved(
         cand_sum = sum(best_cand)
         diff = abs(cand_sum - target_height)
         rel_error = diff / target_height if target_height > 0 else 0
-        # Only return heuristic if rel_error < 1% (very accurate)
-        # Otherwise continue to backtracking for better solution
-        if rel_error < 0.01:
+        # Only return heuristic if rel_error < 0.1% (EXTREMELY accurate)
+        # Otherwise continue to backtracking to find perfect solution
+        if rel_error < 0.001:
             return best_cand, best_conf
         # Store as fallback
         heuristic_fallback = best_cand
@@ -393,7 +603,7 @@ def find_inner_heights_improved(
     best_score = float("inf")
     best_diff = float("inf")
     call_count = [0]
-    MAX_CALLS = 20000  # Increased for complex cases with 7+ segments
+    MAX_CALLS = 100000  # Increased to find perfect solutions
 
     def backtrack(
         remaining: float, current: List[float], usage: Dict[float, int], depth: int
@@ -407,36 +617,47 @@ def find_inner_heights_improved(
         diff = abs(remaining)
         rel = diff / max(target_height, 1.0)
         if rel <= tolerance:
-            # BALANCED SCORING: accuracy first, then frequency
+            # BALANCED SCORING: accuracy FIRST, then other factors
             repetition_penalty = sum(max(0, c - 1) for c in usage.values())
             # Frequency bonus: prefer numbers that appear multiple times in OCR
             freq_bonus = sum(freq.get(n, 1) * usage.get(n, 0) for n in usage.keys())
-            # CRITICAL: Accuracy (rel) has weight 1.0, frequency bonus much smaller
-            # Only apply frequency bonus when accuracy is similar (rel < 0.01)
-            if rel < 0.01:
-                freq_score = -0.05 * freq_bonus  # small bonus when already accurate
+            # CRITICAL: Accuracy is PRIMARY - frequency is only a tiebreaker
+            # Only use frequency when accuracy is already very good (rel < 0.005)
+            if rel < 0.005:
+                freq_score = (
+                    -0.02 * freq_bonus
+                )  # small bonus when already very accurate
             else:
-                freq_score = -0.01 * freq_bonus  # tiny bonus when not accurate
+                freq_score = 0.0  # NO frequency bonus when accuracy is not good enough
 
             score = (
-                rel
-                + 0.02 * (len(current) / max_segments)
-                + 0.05 * repetition_penalty
-                + freq_score
+                rel  # Weight 1.0 - PRIMARY
+                + 0.02 * (len(current) / max_segments)  # Prefer fewer segments
+                + 0.05 * repetition_penalty  # Penalize repetition
+                + freq_score  # Frequency only as tiebreaker
             )
             if score < best_score:
                 best = current.copy()
                 best_score = score
                 best_diff = diff
-                if rel <= 0.001:  # perfect match, exit immediately
+                # Debug: log better solutions
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        f"find_inner: Better solution found! sum={sum(current):.1f}, "
+                        f"target={target_height:.1f}, diff={diff:.1f}, rel={rel:.4f}, "
+                        f"score={score:.4f}, segments={current}"
+                    )
+                if rel == 0.0:  # ONLY exit on PERFECT match
                     return
         if remaining <= 0 or remaining < -target_height * tolerance:
             return
-        # Only early exit for perfect or near-perfect matches
-        if best_diff / max(target_height, 1.0) <= 0.001:  # 0.1% threshold
-            return
-        # Try numbers by frequency first (high-freq numbers prioritized)
-        for n in nums_by_freq:
+        # REMOVED early exit - search exhaustively for best solution
+        # CHANGED: Prioritize LARGE numbers first (greedy approach)
+        # This helps find perfect solutions like [120, 520, 520, 520, 120]
+        # instead of getting stuck at [451, 451, 451, 451] due to frequency bias
+        candidates = nums_desc  # Always use size-sorted (large first)
+
+        for n in candidates:
             if n > remaining * 1.2:
                 continue
             if call_count[0] > MAX_CALLS:
@@ -458,7 +679,7 @@ def find_inner_heights_improved(
             best_diff = heuristic_fallback_diff
         else:
             return [], 0.0
-    
+
     conf = max(
         0.0,
         1.0
@@ -480,9 +701,113 @@ def apply_column_row_consensus(
     """
     Mutates 'assigned' in-place to enforce a consensus width per col_group and height per row_group.
     Strategy: for each group, try candidate values (assigned + numbers) and select the one minimizing total rel error.
+
+    ENHANCED: Auto-detect layout and apply strong consensus for horizontal/vertical layouts.
+
+    CRITICAL LOGIC: Frames với cùng normalized_w PHẢI chọn cùng outer_width!
     """
     freq = Counter(numbers)
-    # Column consensus
+    layout = detect_layout(frames)
+    num_frames = len(frames)
+
+    # CRITICAL: Group frames by normalized_w và enforce same outer_width
+    # Nếu nhiều frames có cùng pixel width → chúng PHẢI chọn cùng mm width
+    pixel_width_groups = defaultdict(list)
+    for idx, f in enumerate(frames):
+        norm_w = f.get("normalized_w", f.get("w", 0))
+        pixel_width_groups[norm_w].append(idx)
+
+    for pixel_w, frame_indices in pixel_width_groups.items():
+        if len(frame_indices) > 1:
+            # Multiple frames với cùng pixel width → force consensus
+            width_votes = Counter(
+                [assigned[i].get("outer_width") for i in frame_indices]
+            )
+            most_common_width, count = width_votes.most_common(1)[0]
+
+            logger.info(
+                f"Enforcing width consensus: {len(frame_indices)} frames with pixel_w={pixel_w} → outer_width={most_common_width}"
+            )
+            for idx in frame_indices:
+                assigned[idx]["outer_width"] = most_common_width
+
+    # CRITICAL: Group frames by normalized_h và enforce same outer_height
+    pixel_height_groups = defaultdict(list)
+    for idx, f in enumerate(frames):
+        norm_h = f.get("normalized_h", f.get("h", 0))
+        pixel_height_groups[norm_h].append(idx)
+
+    for pixel_h, frame_indices in pixel_height_groups.items():
+        if len(frame_indices) > 1:
+            # Multiple frames với cùng pixel height → force consensus
+            height_votes = Counter(
+                [assigned[i].get("outer_height") for i in frame_indices]
+            )
+            most_common_height, count = height_votes.most_common(1)[0]
+
+            logger.info(
+                f"Enforcing height consensus: {len(frame_indices)} frames with pixel_h={pixel_h} → outer_height={most_common_height}"
+            )
+            for idx in frame_indices:
+                assigned[idx]["outer_height"] = most_common_height
+
+    # For horizontal layout: widths should VARY but be consistent across identical frames
+    # Apply majority voting if most frames agree on a width
+    if layout == "horizontal" and num_frames >= 5:
+        # Count width votes
+        width_votes = Counter([a.get("outer_width") for a in assigned])
+        most_common_width, count = width_votes.most_common(1)[0]
+
+        # If VERY STRONG majority (≥ 87.5%, e.g. 7/8) agrees on a width → force all
+        if count / num_frames >= 0.875:
+            logger.info(
+                f"Horizontal layout: {count}/{num_frames} frames agree on width={most_common_width}, forcing consensus"
+            )
+            for i in range(len(assigned)):
+                assigned[i]["outer_width"] = most_common_width
+        elif count / num_frames >= 0.75:
+            # Medium majority: only log warning, don't force
+            logger.info(
+                f"Horizontal layout: {count}/{num_frames} frames agree on width={most_common_width} (not forcing, need ≥87.5%)"
+            )
+
+        # Check if heights are already consistent
+        assigned_heights = [a.get("outer_height") for a in assigned]
+        if len(set(assigned_heights)) > 1:
+            logger.warning(
+                f"Horizontal layout but heights vary: {set(assigned_heights)}"
+            )
+
+    elif layout == "vertical" and num_frames >= 3:
+        # Force all frames to have SAME WIDTH
+        width_candidates = {}
+        for i, f_cand in enumerate(frames_candidates):
+            for w_val, w_rel, w_conf in f_cand["w_cands"]:
+                if w_val not in width_candidates:
+                    width_candidates[w_val] = []
+                width_candidates[w_val].append(w_rel)
+
+        # Select width with best score
+        best_w = None
+        best_w_score = float("inf")
+        for w_val, rels in width_candidates.items():
+            avg_rel = sum(rels) / len(rels)
+            w_freq = freq.get(w_val, 0)
+            freq_penalty = max(0, w_freq - 2) * 0.1
+            score = avg_rel + freq_penalty
+            if score < best_w_score:
+                best_w_score = score
+                best_w = w_val
+
+        # Apply consensus width to ALL frames
+        if best_w is not None:
+            for i in range(len(assigned)):
+                assigned[i]["outer_width"] = int(round(best_w))
+            logger.debug(
+                f"Vertical layout: forced consensus width={best_w} for all {num_frames} frames"
+            )
+
+    # Column consensus (original logic for mixed layouts or when col_group exists)
     col_groups = defaultdict(list)
     for idx, f in enumerate(frames):
         col = f.get("col_group")
@@ -850,11 +1175,71 @@ def global_assign_outer(
                         improved = True
         # end for frames
 
-    # After local search, apply column/row consensus to further reduce variance
-    apply_column_row_consensus(frames, assignments, frames_candidates, numbers)
+    # STEP 1: Apply HARD CONSTRAINT - cùng pixel PHẢI cùng mm (NO cost check)
+    # This is a logical consistency requirement, not a heuristic
+    pixel_width_groups = defaultdict(list)
+    for idx, f in enumerate(frames):
+        norm_w = f.get("normalized_w", f.get("w", 0))
+        pixel_width_groups[norm_w].append(idx)
+
+    for pixel_w, frame_indices in pixel_width_groups.items():
+        if len(frame_indices) > 1:
+            # Force same outer_width for frames with same pixel width
+            width_votes = Counter(
+                [best_assigns[i].get("outer_width") for i in frame_indices]
+            )
+            most_common_width, count = width_votes.most_common(1)[0]
+            logger.info(
+                f"HARD CONSTRAINT: {len(frame_indices)} frames with pixel_w={pixel_w} → forcing outer_width={most_common_width}"
+            )
+            for idx in frame_indices:
+                best_assigns[idx]["outer_width"] = most_common_width
+                assignments[idx]["outer_width"] = most_common_width
+
+    pixel_height_groups = defaultdict(list)
+    for idx, f in enumerate(frames):
+        norm_h = f.get("normalized_h", f.get("h", 0))
+        pixel_height_groups[norm_h].append(idx)
+
+    for pixel_h, frame_indices in pixel_height_groups.items():
+        if len(frame_indices) > 1:
+            # Force same outer_height for frames with same pixel height
+            height_votes = Counter(
+                [best_assigns[i].get("outer_height") for i in frame_indices]
+            )
+            most_common_height, count = height_votes.most_common(1)[0]
+            logger.info(
+                f"HARD CONSTRAINT: {len(frame_indices)} frames with pixel_h={pixel_h} → forcing outer_height={most_common_height}"
+            )
+            for idx in frame_indices:
+                best_assigns[idx]["outer_height"] = most_common_height
+                assignments[idx]["outer_height"] = most_common_height
+
+    # STEP 2: Apply soft consensus (layout-based heuristics) WITH cost check
+    old_best_cost = compute_cost(best_assigns)
+    temp_assignments = copy.deepcopy(assignments)
+    apply_column_row_consensus(frames, temp_assignments, frames_candidates, numbers)
+
+    # Only apply soft consensus if it improves or maintains quality
+    consensus_cost = compute_cost(temp_assignments)
+    if consensus_cost <= old_best_cost * 1.05:  # Allow 5% cost increase for consensus
+        logger.debug(
+            f"Applying soft consensus (cost: {old_best_cost:.3f} → {consensus_cost:.3f})"
+        )
+        best_assigns = copy.deepcopy(temp_assignments)
+        assignments = copy.deepcopy(temp_assignments)
+    else:
+        logger.debug(
+            f"Skipping soft consensus (would increase cost too much: {old_best_cost:.3f} → {consensus_cost:.3f})"
+        )
 
     # POST-VALIDATION: Only for frames with multiple viable width candidates
     # Check if switching width uses more OCR numbers
+    # BUT respect layout heuristics (frequency-based filtering)
+    layout = detect_layout(frames)
+    num_frames = len(frames)
+    freq = Counter(numbers)
+
     for i in range(n):
         # Get viable width candidates (OCR numbers within 25% tolerance)
         w_cands = frames_candidates[i]["w_cands"]
@@ -878,9 +1263,13 @@ def global_assign_outer(
             current_used.update(current_inner)
         current_ocr_count = len(current_used & numbers_set)
 
+        # Get current width frequency
+        current_w_freq = freq.get(current_w, 0)
+
         # Find best alternative
         best_alt_w = None
         best_alt_count = current_ocr_count
+        best_alt_score = 0  # Score = alt_count - penalty for bad layout match
 
         for w_val, w_rel in viable_widths:
             if abs(w_val - current_w) < 1:
@@ -892,14 +1281,36 @@ def global_assign_outer(
                 alt_used.update(current_inner)
             alt_count = len(alt_used & numbers_set)
 
-            # Switch only if uses MORE OCR numbers
-            if alt_count > best_alt_count:
+            # Check layout heuristic compliance
+            alt_w_freq = freq.get(int(round(w_val)), 0)
+            layout_penalty = 0
+
+            if layout == "horizontal":
+                # Horizontal: prefer high frequency (≈ num_frames)
+                if alt_w_freq < num_frames * 0.6:
+                    layout_penalty = 2  # Strong penalty for low frequency
+                if current_w_freq >= num_frames * 0.6:
+                    # Current already has good frequency - don't switch unless much better
+                    layout_penalty += 3
+            elif layout == "vertical":
+                # Vertical: prefer low frequency (shared width)
+                if alt_w_freq > num_frames * 0.3:
+                    layout_penalty = 2
+                if current_w_freq <= num_frames * 0.3:
+                    layout_penalty += 3
+
+            # Adjusted score
+            alt_score = alt_count - layout_penalty
+
+            # Switch only if better score
+            if alt_score > best_alt_score:
                 best_alt_w = int(round(w_val))
                 best_alt_count = alt_count
+                best_alt_score = alt_score
 
-        if best_alt_w is not None:
+        if best_alt_w is not None and best_alt_score > current_ocr_count:
             logger.info(
-                f"Post-validation: frame {i} width {current_w}→{best_alt_w} (OCR: {current_ocr_count}→{best_alt_count})"
+                f"Post-validation: frame {i} width {current_w}→{best_alt_w} (OCR: {current_ocr_count}→{best_alt_count}, layout={layout})"
             )
             best_assigns[i]["outer_width"] = best_alt_w
 

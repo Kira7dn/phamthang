@@ -4,13 +4,10 @@ from typing import Optional
 
 import numpy as np
 import cv2
-from utils.image_process import (
+from app.tools.image_process import (
     ImagePipeline,
     adaptive_threshold,
-    bridge_horizontal,
-    clahe,
     add_white_padding,
-    invert_background,
     morph_close,
     morph_open,
     normalize_bg,
@@ -46,8 +43,8 @@ def normalize_image(
     pipeline.add("resize", lambda image: resize_with_limit(image, 1920, 1920)[0])
     pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
-    pipeline.add("blur", lambda image: cv2.medianBlur(image, 5))
-    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
+    pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (3, 3), 0))
     # pipeline.add("clahe", clahe)
     pipeline.add("adaptive_threshold", adaptive_threshold)
     # pipeline.add("invert_background", invert_background)

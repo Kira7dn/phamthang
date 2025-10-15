@@ -24,10 +24,10 @@ from app.models import (
     BillOfMaterials,
     FramePixel,
 )
-from utils.cluster_image import extract_block_images
-from utils.frame_detection import detect_frames_pipeline
-from utils.dimension_infer import extract_dimension
-from utils.normalize_image import normalize_image
+from app.tools.cluster_image import extract_block_images
+from app.tools.frame_detection import detect_frames_pipeline
+from app.tools.dimension_infer import extract_dimension
+from app.tools.normalize_image import normalize_image
 
 
 logger = logging.getLogger("app.pipeline")
@@ -327,7 +327,8 @@ def main() -> None:
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
     # img_path = Path("assets/z7102259936013_b55eb7da65cf594e93eb2b8ff31af7b6.jpg")
     # img_path = Path("assets/z7070874695339_7eec1b9a231e267bca5e9e795f4f630d.jpg")
-    img_path = thin5_thin3
+    test = Path("outputs/8a7465d523a24cf8b7853bd3c15bee1a/cluster_image/00_origin.png")
+    img_path = test
 
     # Generate unique output directory with UUID
     run_id = uuid.uuid4().hex[:8]  # Use first 8 chars of UUID

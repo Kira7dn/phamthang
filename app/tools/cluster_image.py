@@ -9,7 +9,7 @@ import shutil
 import cv2
 import numpy as np
 
-from utils.image_process import (
+from app.tools.image_process import (
     ImagePipeline,
     adaptive_threshold,
     enhance_lines,
@@ -19,7 +19,7 @@ from utils.image_process import (
     resize_with_limit,
     to_gray,
 )
-from utils.blockprocess import remove_diagonal_lines, reconnect_broken_frames
+from app.tools.blockprocess import remove_diagonal_lines, reconnect_broken_frames
 
 
 @dataclass
@@ -280,8 +280,8 @@ def segment_blocks(
     pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
     pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
     pipeline.add("adaptive_threshold", adaptive_threshold)
-    pipeline.add("morph_open", lambda image: morph_open(image, (1, 1), 1))
-    pipeline.add("morph_close", lambda image: morph_close(image, (2, 2), 1))
+    pipeline.add("morph_open", lambda image: morph_open(image, (3, 3), 1))
+    pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 1))
     pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonal lines
     pipeline.add("enhance_lines", enhance_lines)
     pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
@@ -347,7 +347,7 @@ def extract_block_images(
 
 
 def main() -> None:
-    img_path = Path("assets/z7064219281543_b33d93d5cf3880d2f5f6bab3ed22eb89.jpg")
+    img_path = Path("outputs/pipeline/b8274950/cluster_image/00_origin.png")
     # img_path = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
