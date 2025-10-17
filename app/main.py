@@ -53,7 +53,7 @@ app = FastAPI(title="Extract Panel Pipeline API")
 
 
 def _get_outputs_base_dir() -> Path | None:
-    if os.getenv("IS_PRODUCTION", "").lower() == "true":
+    if is_production:
         return None
     base_dir = Path("outputs")
     base_dir.mkdir(parents=True, exist_ok=True)

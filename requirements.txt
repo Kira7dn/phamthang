@@ -1,8 +1,15 @@
 opencv-python==4.10.0.84
 numpy==1.26.4
+matplotlib==3.9.2
 pydantic-ai-slim[google,openai]
 python-dotenv
+pydantic
 fastapi
 uvicorn
 python-multipart
 httpx
+paddleocr
+paddlepaddle
+scikit-learn
+pytesseract
+requests

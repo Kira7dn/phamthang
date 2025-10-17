@@ -12,11 +12,13 @@ import json
 import logging
 from pathlib import Path
 import shutil
-from typing import Any, Dict, List, Optional, Tuple
-
-import cv2
+from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
+import cv2
+from pathlib import Path
+import json
 
+from app.models import Frame
 from app.tools.blockprocess import (
     apply_otsu_threshold,
     connect_lines,
@@ -29,8 +31,8 @@ from app.tools.blockprocess import (
     remove_text_regions,
     to_grayscale,
 )
-from app.tools.normalize_image import normalize_image
-from app.tools.image_process import ImagePipeline
+from app.tools.normalize_image import normalize_frame
+from app.tools.image_process import ImagePipeline, invert_background
 
 # Constants for frame detection
 MIN_FRAME_PERCENTAGE = 0.02  # 2% of image area
@@ -48,10 +50,10 @@ TEXT_MAX_SIZE = 120
 TEXT_MAX_AREA = 10000
 
 
-def detect_frames_pipeline(
+def detect_frames(
     image: np.ndarray,
     output_path: Optional[Path] = None,
-) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+) -> Tuple[np.ndarray, List[Frame]]:
     """Main pipeline to detect aluminum frames.
 
     Steps:
@@ -140,14 +142,15 @@ def detect_frames_pipeline(
 
     # Build and run pipeline
     pipeline = ImagePipeline(output_path)
-    pipeline.add("grayscale", to_grayscale)
-    pipeline.add("otsu_threshold", apply_otsu_threshold)
+    # pipeline.add("invert_background", invert_background)
+    # pipeline.add("grayscale", to_grayscale)
+    # pipeline.add("otsu_threshold", apply_otsu_threshold)
     pipeline.add(
         "remove_text_regions", remove_text_regions
     )  # Remove text/numbers first
     pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonals
     pipeline.add("connect_lines", connect_lines)  # Connect broken segments
-    pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
+    # pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
     pipeline.add("store_binary", store_binary)
     pipeline.add("detect_contours", detect_contour_frames)
     pipeline.add("detect_hough", detect_hough_lines)
@@ -159,7 +162,25 @@ def detect_frames_pipeline(
     if output_path is not None:
         with open(output_path / "frames.json", "w", encoding="utf-8") as f:
             json.dump(pipeline_data["enhanced_frames"], f, ensure_ascii=False)
-    return annotated, pipeline_data["enhanced_frames"]
+
+    # Convert dict frames to Frame models
+    frame_models = [
+        Frame(
+            x=f["x"],
+            y=f["y"],
+            w=f["w"],
+            h=f["h"],
+            area=f["area"],
+            aspect=f["aspect"],
+            fill_ratio=f["fill_ratio"],
+            h_lines_count=f["h_lines_count"],
+            v_lines_count=f["v_lines_count"],
+            total_lines=f["total_lines"],
+        )
+        for f in pipeline_data["enhanced_frames"]
+    ]
+
+    return annotated, frame_models
 
 
 if __name__ == "__main__":
@@ -185,12 +206,11 @@ if __name__ == "__main__":
     thin_3 = Path("outputs/pipeline/15234d05/Block 0/frame_detection/00_origin.png")
     test = Path("outputs/pipeline/ae436b30/Block 0/normalized/00_origin.png")
     # img_path = frame3_thin
-    img_path = thin5
-    # img_path = test
+    # img_path = thin5
     # img_path = test
     # img_path = frame4_bold
     # img_path = thin8frame
-    # img_path = thin_3
+    img_path = thin_3
     output_dir = Path("outputs", "frame_detection")
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -199,12 +219,12 @@ if __name__ == "__main__":
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    image = normalize_image(image, output_dir / "normalized_image")
+    image = normalize_frame(image, output_dir / "normalized_image")
     if image is None:
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    annotated, frames = detect_frames_pipeline(image, output_path=output_dir)
+    annotated, frames = detect_frames(image, output_path=output_dir)
     if annotated is None:
         raise FileNotFoundError(
             f"Không vẽ được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."

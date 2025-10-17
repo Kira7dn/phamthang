@@ -9,8 +9,6 @@ import statistics
 
 from pydantic import BaseModel
 
-from app.agent.panel_verifier import AggregatedResult
-
 
 class BOMItem(BaseModel):
     type: str
@@ -81,7 +79,14 @@ def infer_hinge_quantity(
     return max(min(hinge_count, 6), 2)
 
 
-def build_item_list(aggregated: AggregatedResult) -> BuildItemOutput:
+def build_item_list(aggregated: Any) -> BuildItemOutput:
+    """
+    Build material list from an aggregated payload.
+
+    Accepts either:
+    - dict payload with shape {"blocks": [{"block_no": str, "panels": [...]}]}
+    - pydantic/BaseModel with attribute .blocks containing similar dicts/objects
+    """
     aggregates: Dict[Tuple[str, str, str], Dict[str, float | int]] = {}
     ordered_keys: List[Tuple[str, str, str]] = []
 
@@ -119,16 +124,29 @@ def build_item_list(aggregated: AggregatedResult) -> BuildItemOutput:
                     else:
                         entry[meta_key] = meta_value
 
+    # Resolve blocks from dict or model
+    if isinstance(aggregated, dict):
+        blocks = aggregated.get("blocks", [])
+    else:
+        blocks = getattr(aggregated, "blocks", [])
+
     hinge_total = 0
-    for block in aggregated.blocks:
-        for panel in block.panels:
-            width = panel.outer_width
-            height = panel.outer_height
+    for block in blocks:
+        panels = block.get("panels", []) if isinstance(block, dict) else getattr(block, "panels", [])
+        for panel in panels:
+            if isinstance(panel, dict):
+                width = panel.get("outer_width")
+                height = panel.get("outer_height")
+                inner_heights = panel.get("inner_heights", [])
+            else:
+                width = getattr(panel, "outer_width", 0)
+                height = getattr(panel, "outer_height", 0)
+                inner_heights = getattr(panel, "inner_heights", [])
             if not width or not height:
                 continue
 
-            area = (width * height) / 1_000_000
-            hinge_count = infer_hinge_quantity(panel.inner_heights, height)
+            area = (float(width) * float(height)) / 1_000_000
+            hinge_count = infer_hinge_quantity(inner_heights, float(height))
             key = ("Khung nhôm", f"({width}mm x {height}mm)", "m²")
             accumulate(
                 key,
@@ -136,7 +154,7 @@ def build_item_list(aggregated: AggregatedResult) -> BuildItemOutput:
                 metadata={
                     "width": width,
                     "height": height,
-                    "hinge_spacings": [tuple(panel.inner_heights)],
+                    "hinge_spacings": [tuple(inner_heights)],
                     "hinge_counts": [hinge_count],
                 },
             )
@@ -270,9 +288,8 @@ def main() -> None:
         ]
     }
 
-    sample = AggregatedResult.model_validate(sample_payload)
-
-    result = build_item_list(sample)
+    # Run with plain dict payload (no external model dependency)
+    result = build_item_list(sample_payload)
     result_payload = result.model_dump()
     output_dir = Path("outputs/panel_agent/item_builder")
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,7 @@ uvicorn
 opencv-python-headless
 numpy
 python-dotenv
-pydantic-ai-slim[openai]
+pydantic-ai-slim[openai,google]
 python-multipart
 httpx
 mangum

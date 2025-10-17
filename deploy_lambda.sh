@@ -174,110 +174,35 @@ else
     set -e
 fi
 
-# ================= CREATE OR GET API GATEWAY =================
-echo "🌐 Checking API Gateway..."
-EXISTING_API_ID=$(aws apigatewayv2 get-apis --query "Items[?Name=='${LAMBDA_FUNCTION_NAME}-api'].ApiId" --output text --region "$AWS_REGION")
+echo "🔗 Cấu hình Function URL cho Lambda..."
+set +e
+FUNCTION_URL=$(aws lambda get-function-url-config \
+    --function-name "$LAMBDA_FUNCTION_NAME" \
+    --region "$AWS_REGION" \
+    --query 'FunctionUrl' --output text 2>/dev/null)
+GET_URL_EXIT=$?
+set -e
 
-if [ -z "$EXISTING_API_ID" ]; then
-    echo "⚙️ Creating new API Gateway HTTP..."
-    API_ID=$(aws apigatewayv2 create-api \
-        --name "${LAMBDA_FUNCTION_NAME}-api" \
-        --protocol-type HTTP \
-        --target "arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${LAMBDA_FUNCTION_NAME}" \
-        --region "$AWS_REGION" \
-        --query "ApiId" --output text)
-
-    ENDPOINT=$(aws apigatewayv2 get-api \
-        --api-id "$API_ID" \
-        --query "ApiEndpoint" --output text --region "$AWS_REGION")
-
-    # Ensure integration uses payload format version 2.0
-    INTEGRATION_ID=$(aws apigatewayv2 get-integrations \
-        --api-id "$API_ID" \
-        --region "$AWS_REGION" \
-        --query 'Items[0].IntegrationId' --output text)
-    if [ -n "$INTEGRATION_ID" ] && [ "$INTEGRATION_ID" != "None" ]; then
-        aws apigatewayv2 update-integration \
-            --api-id "$API_ID" \
-            --integration-id "$INTEGRATION_ID" \
-            --payload-format-version "2.0" \
-            --region "$AWS_REGION" >/dev/null
-    fi
-
-    # Create explicit routes for FastAPI docs (idempotent)
-    if [ -n "$INTEGRATION_ID" ] && [ "$INTEGRATION_ID" != "None" ]; then
-        for ROUTE in \
-            "GET /docs" \
-            "GET /openapi.json" \
-            "GET /docs/oauth2-redirect" \
-            "GET /" \
-            "GET /health" \
-            "POST /extract" \
-            "ANY /{proxy+}"; do
-            aws apigatewayv2 create-route \
-                --api-id "$API_ID" \
-                --route-key "$ROUTE" \
-                --target "integrations/$INTEGRATION_ID" \
-                --region "$AWS_REGION" >/dev/null 2>&1 || echo "Route $ROUTE may already exist, continuing"
-        done
-    fi
-
-    # Add permission for API Gateway to invoke Lambda (new API)
-    SID="apigw-invoke-${API_ID}"
-    aws lambda add-permission \
+if [ "$GET_URL_EXIT" -ne 0 ] || [ -z "$FUNCTION_URL" ] || [ "$FUNCTION_URL" = "None" ]; then
+    FUNCTION_URL=$(aws lambda create-function-url-config \
         --function-name "$LAMBDA_FUNCTION_NAME" \
-        --statement-id "$SID" \
-        --action "lambda:InvokeFunction" \
-        --principal "apigateway.amazonaws.com" \
-        --source-arn "arn:aws:execute-api:${AWS_REGION}:${ACCOUNT_ID}:${API_ID}/*/*/*" \
-        --region "$AWS_REGION" || echo "Permission $SID may already exist, continuing"
-else
-    API_ID="$EXISTING_API_ID"
-    ENDPOINT=$(aws apigatewayv2 get-api \
-        --api-id "$API_ID" \
-        --query "ApiEndpoint" --output text --region "$AWS_REGION")
-
-    # Ensure permission exists for existing API as well
-    SID="apigw-invoke-${API_ID}"
-    aws lambda add-permission \
-        --function-name "$LAMBDA_FUNCTION_NAME" \
-        --statement-id "$SID" \
-        --action "lambda:InvokeFunction" \
-        --principal "apigateway.amazonaws.com" \
-        --source-arn "arn:aws:execute-api:${AWS_REGION}:${ACCOUNT_ID}:${API_ID}/*/*/*" \
-        --region "$AWS_REGION" >/dev/null 2>&1 || echo "Permission $SID may already exist, continuing"
-
-    # Fetch integration id for existing API and ensure payload v2.0
-    INTEGRATION_ID=$(aws apigatewayv2 get-integrations \
-        --api-id "$API_ID" \
+        --auth-type NONE \
         --region "$AWS_REGION" \
-        --query 'Items[0].IntegrationId' --output text)
-    if [ -n "$INTEGRATION_ID" ] && [ "$INTEGRATION_ID" != "None" ]; then
-        aws apigatewayv2 update-integration \
-            --api-id "$API_ID" \
-            --integration-id "$INTEGRATION_ID" \
-            --payload-format-version "2.0" \
-            --region "$AWS_REGION" >/dev/null
-
-        # Create explicit routes for FastAPI docs and main endpoints (idempotent)
-        for ROUTE in \
-            "GET /docs" \
-            "GET /openapi.json" \
-            "GET /docs/oauth2-redirect" \
-            "GET /" \
-            "GET /health" \
-            "POST /extract" \
-            "ANY /{proxy+}"; do
-            aws apigatewayv2 create-route \
-                --api-id "$API_ID" \
-                --route-key "$ROUTE" \
-                --target "integrations/$INTEGRATION_ID" \
-                --region "$AWS_REGION" >/dev/null 2>&1 || echo "Route $ROUTE may already exist, continuing"
-        done
-    fi
+        --query 'FunctionUrl' --output text)
 fi
+
+SID_FUNCTION_URL="function-url-public-${LAMBDA_FUNCTION_NAME}"
+aws lambda add-permission \
+    --function-name "$LAMBDA_FUNCTION_NAME" \
+    --action "lambda:InvokeFunctionUrl" \
+    --principal "*" \
+    --function-url-auth-type NONE \
+    --statement-id "$SID_FUNCTION_URL" \
+    --region "$AWS_REGION" >/dev/null 2>&1 || echo "Permission $SID_FUNCTION_URL may already exist, continuing"
 
 echo
 echo "✅ Deployment completed!"
 echo "Lambda function: $LAMBDA_FUNCTION_NAME"
-echo "API endpoint: $ENDPOINT"
+if [ -n "${FUNCTION_URL:-}" ] && [ "$FUNCTION_URL" != "None" ]; then
+    echo "Function URL: $FUNCTION_URL"
+fi

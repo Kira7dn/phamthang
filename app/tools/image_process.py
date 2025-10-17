@@ -386,14 +386,25 @@ def normalize_bg(img: np.ndarray) -> np.ndarray:
 def adaptive_threshold(
     img: np.ndarray, block_size: int = 15, c: int = 10
 ) -> np.ndarray:
-    return cv2.adaptiveThreshold(
+    """
+    Adaptive threshold - use BINARY for clean binarization.
+    Text will be BLACK on WHITE background (good for Vision OCR).
+    Do NOT invert - Vision OCR can handle both black and white text.
+    """
+    # Use BINARY to get text=black, background=white
+    thresh = cv2.adaptiveThreshold(
         img,
         255,
         cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV,
+        cv2.THRESH_BINARY,
         block_size,
         c,
     )
+    
+    # NO auto-invert needed! Vision OCR works fine with black text on white background
+    # Inverting would create 93% black pixels which loses detail
+    
+    return thresh
 
 
 def to_gray(img: np.ndarray) -> np.ndarray:

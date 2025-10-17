@@ -1,5 +1,5 @@
 example/
-outputs/
+output*/
 assets/
 models/
 deploy.sh

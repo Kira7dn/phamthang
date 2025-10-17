@@ -8,6 +8,9 @@ from app.tools.image_process import (
     ImagePipeline,
     adaptive_threshold,
     add_white_padding,
+    bridge_horizontal,
+    clahe,
+    invert_background,
     morph_close,
     morph_open,
     normalize_bg,
@@ -15,6 +18,69 @@ from app.tools.image_process import (
     resize_with_limit,
     to_gray,
 )
+
+
+def remove_line_noise_binary(binary_img: np.ndarray) -> np.ndarray:
+    """
+    Remove line noise from binary image (after adaptive threshold).
+    Removes horizontal, vertical, and diagonal lines while preserving text.
+    Works on binary images (black text on white background).
+    """
+    h, w = binary_img.shape[:2]
+
+    # Invert if needed (we want black lines on white background)
+    if np.mean(binary_img) < 127:
+        working = cv2.bitwise_not(binary_img)
+        inverted = True
+    else:
+        working = binary_img.copy()
+        inverted = False
+
+    # Detect horizontal lines
+    horiz_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 20, 1))
+    horizontal_lines = cv2.morphologyEx(
+        working, cv2.MORPH_OPEN, horiz_kernel, iterations=1
+    )
+
+    # Detect vertical lines
+    vert_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 20))
+    vertical_lines = cv2.morphologyEx(
+        working, cv2.MORPH_OPEN, vert_kernel, iterations=1
+    )
+
+    # Detect diagonal lines using HoughLinesP
+    edges = cv2.Canny(working, 50, 150)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=50,
+        minLineLength=min(h, w) // 8,
+        maxLineGap=15,
+    )
+
+    diagonal_mask = np.zeros_like(working)
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+            # Only remove long lines (dimension lines, not text strokes)
+            if length > min(h, w) * 0.1:
+                cv2.line(diagonal_mask, (x1, y1), (x2, y2), 255, 3)
+
+    # Combine all line masks
+    line_mask = cv2.bitwise_or(horizontal_lines, vertical_lines)
+    line_mask = cv2.bitwise_or(line_mask, diagonal_mask)
+
+    # Remove lines from image (set to white)
+    result = working.copy()
+    result[line_mask > 0] = 255
+
+    # Invert back if needed
+    if inverted:
+        result = cv2.bitwise_not(result)
+
+    return result
 
 
 def _resize_short_edge(image: np.ndarray, target_short: int) -> np.ndarray:
@@ -30,16 +96,85 @@ def _resize_short_edge(image: np.ndarray, target_short: int) -> np.ndarray:
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def normalize_image(
+def smart_resize(img: np.ndarray, min_size: int = 800, max_size: int = 1920):
+    h, w = img.shape[:2]
+    # Only upscale if extremely small (< 800px)
+    if min(h, w) < min_size:
+        scale = min_size / min(h, w)
+        return cv2.resize(
+            img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC
+        )
+    # If too large, downscale
+    elif max(h, w) > max_size:
+        return resize_with_limit(img, max_size, max_size)[0]
+    return img
+
+
+def light_sharpen(img):
+    kernel = np.array([[-0.5, -0.5, -0.5], [-0.5, 5.0, -0.5], [-0.5, -0.5, -0.5]])
+    sharpened = cv2.filter2D(img, -1, kernel)
+    # Blend with original to avoid over-sharpening
+    return cv2.addWeighted(img, 0.7, sharpened, 0.3, 0)
+
+
+def normalize_frame(
     image: np.ndarray,
     output_path: Optional[Path] = None,
     padding_pct: float = 0.05,
     final_short_edge: Optional[int] = None,
 ) -> np.ndarray:
+    """
+    Optimize image for OCR: enhance contrast, denoise, binarize.
+
+    Pipeline:
+    1. Upscale if too small (better OCR on small text)
+    2. Convert to grayscale
+    3. Normalize background
+    4. CLAHE for local contrast enhancement
+    5. Denoise with bilateral filter
+    6. Adaptive threshold (better for uneven lighting)
+    7. Clean up with morphology
+    8. Add padding
+    """
     if image is None or (hasattr(image, "size") and image.size == 0):
         raise ValueError("normalize_image: input image is empty or None")
+
     pipeline = ImagePipeline(output_path)
 
+    # pipeline.add("smart_resize", smart_resize)
+
+    # 2. Convert to grayscale
+    # pipeline.add("to_gray", to_gray)
+
+    # 3. Normalize background (remove shadows, uneven lighting)
+    # pipeline.add("normalize_bg", normalize_bg)
+
+    # 4. CLAHE for local contrast enhancement (makes text clearer)
+    # pipeline.add("clahe", clahe)
+
+    # 6. Light denoise - very gentle to avoid blurring text
+    # pipeline.add("denoise", lambda img: cv2.GaussianBlur(img, (3, 3), 0))
+
+    # 7. Very light sharpen to enhance text edges near lines
+
+    # pipeline.add("light_sharpen", light_sharpen)
+
+    # pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+
+    # 8. Adaptive threshold (better for varying lighting)
+    # Use very small block_size (7) to preserve tiny text near lines like "120"
+    # pipeline.add(
+    #     "adaptive_threshold", lambda img: adaptive_threshold(img, block_size=15, c=10)
+    # )
+    # pipeline.add("remove_line_noise", remove_line_noise_binary)
+
+    # 9. Remove line noise from binary image (after threshold)
+    # This removes dashed lines and solid lines without blurring text
+    # pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+    # 10. Very light morphology to clean up (remove tiny noise only)
+    # pipeline.add("morph_open", lambda img: morph_open(img, (1, 1), 2))
+    # pipeline.add("morph_close", lambda image: morph_close(image, (1, 1), 1))
+    # pipeline.add("smart_resize", smart_resize)
     pipeline.add("resize", lambda image: resize_with_limit(image, 1920, 1920)[0])
     pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
@@ -66,11 +201,41 @@ def normalize_image(
     pipeline.add("remove_small_components", remove_small_components)
     # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
     # pipeline.add("invert_background", invert_background)
-    pipeline.add("white_padding", lambda img: add_white_padding(img, padding_pct))
-    if final_short_edge is not None:
-        pipeline.add(
-            "resize_short_edge", lambda img: _resize_short_edge(img, final_short_edge)
-        )
+    output_image = pipeline.run(image)
+    return output_image
+
+
+def normalize_text(image: np.ndarray, output_path: Optional[Path] = None) -> np.ndarray:
+    if image is None or (hasattr(image, "size") and image.size == 0):
+        raise ValueError("normalize_image: input image is empty or None")
+    pipeline = ImagePipeline(output_path)
+
+    pipeline.add("smart_resize", lambda image: smart_resize(image, 800, 1920))
+    pipeline.add("to_gray", to_gray)
+    pipeline.add("normalize_bg", normalize_bg)
+    pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (3, 3), 0))
+    # pipeline.add("clahe", clahe)
+    pipeline.add("adaptive_threshold", adaptive_threshold)
+    # pipeline.add("invert_background", invert_background)
+    pipeline.add("blur", lambda image: cv2.medianBlur(image, 1))
+    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (1, 1), 0))
+    pipeline.add(
+        "enhance_edges",
+        lambda img: cv2.addWeighted(img, 1, cv2.GaussianBlur(img, (0, 0), 3), -0.5, 0),
+    )
+    # pipeline.add("clahe", clahe)
+    pipeline.add(
+        "otsu",
+        lambda image: cv2.threshold(
+            image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )[1],
+    )
+    pipeline.add("morph_open", lambda image: morph_open(image, (2, 2), 1))
+    pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 2))
+    pipeline.add("remove_small_components", remove_small_components)
+    # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
+    # pipeline.add("invert_background", invert_background)
     output_image = pipeline.run(image)
     return output_image
 
@@ -81,9 +246,11 @@ if __name__ == "__main__":
     # img_path = Path("outputs/24a94f1546374c16b54e1e411cc96010/Block 1/00_origin.png")
     # img_path = Path("outputs/c7895b9a60794796bcdb6568edda235b/Block 0/00_origin.png")
     # img_path = Path("outputs/22609b998d2c4ce28e6bceb77b92ffb2/Block 0/00_origin.png")
-    img_path = Path("assets/block/image.png")
+    img_path = Path(
+        "outputs/test_pipeline_dims_classify/Block 0/normalized_ocr/00_origin.png"
+    )
 
-    output_dir = Path("outputs", "normalize_image")
+    output_dir = Path("outputs", "normalize_text")
     if output_dir.exists():
         shutil.rmtree(output_dir)
     image = cv2.imread(img_path)
@@ -91,5 +258,5 @@ if __name__ == "__main__":
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    normalized_image = normalize_image(image, output_dir)
+    normalized_image = normalize_text(image, output_dir)
     print("Normalized image saved to:", output_dir)

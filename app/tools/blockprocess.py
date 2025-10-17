@@ -8,10 +8,13 @@ Strategy:
 4. Combine results for accurate frame dimensions
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import logging
 import cv2
 import numpy as np
+
+from app.models import BoundingRect
 
 # Constants for frame detection
 MIN_FRAME_PERCENTAGE = 0.015  # 1.5% of image area (lowered to catch smaller frames)
@@ -31,9 +34,10 @@ TEXT_MAX_AREA = 10000
 
 def draw_rectangles(
     image: np.ndarray,
-    rects: List[Dict[str, Any]],
+    rects: Sequence[BoundingRect],
     color: Tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
+    labels: Optional[Sequence[str]] = None,
 ) -> np.ndarray:
     """Draw rectangles on image with labels."""
     annotated = image.copy()
@@ -41,11 +45,19 @@ def draw_rectangles(
         annotated = cv2.cvtColor(annotated, cv2.COLOR_GRAY2BGR)
 
     for i, rect in enumerate(rects):
-        x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
+        # Support both dict and object
+        if isinstance(rect, dict):
+            x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
+        else:
+            x, y, w, h = rect.x, rect.y, rect.w, rect.h
         cv2.rectangle(annotated, (x, y), (x + w, y + h), color, thickness)
 
         # Draw label
-        label = f"Frame {i+1}: {w}x{h}"
+        label: Optional[str] = None
+        if labels is not None and i < len(labels):
+            label = labels[i]
+        if not label:
+            label = f"Frame {i+1}: {w}x{h}"
         cv2.putText(
             annotated,
             label,
@@ -124,14 +136,14 @@ def remove_text_regions(binary: np.ndarray) -> np.ndarray:
         # BUT preserve horizontal/vertical lines (high aspect ratio)
         is_small = w_comp < TEXT_MAX_SIZE and h_comp < TEXT_MAX_SIZE
         is_compact = area < TEXT_MAX_AREA
-        
+
         # Calculate aspect ratio
         aspect_ratio = max(w_comp, h_comp) / max(1, min(w_comp, h_comp))
-        
+
         # CRITICAL: Only remove if aspect ratio is LOW (text-like)
         # High aspect ratio means it's a line (horizontal or vertical edge of frame)
         is_text_like = aspect_ratio < 5  # Text has low aspect ratio
-        
+
         if is_small and is_compact and is_text_like:
             cleaned[labels == i] = 0
 
@@ -158,8 +170,8 @@ def connect_lines(binary: np.ndarray) -> np.ndarray:
         rho=1,
         theta=np.pi / 180,
         threshold=20,  # Lower to detect weak segments
-        minLineLength=15,  # Shorter to catch small pieces
-        maxLineGap=30,  # Allow gaps
+        minLineLength=50,  # Shorter to catch small pieces
+        maxLineGap=20,  # Allow gaps
     )
 
     if lines is None:
@@ -340,10 +352,12 @@ def reconnect_broken_frames(binary: np.ndarray) -> np.ndarray:
     # Step 5: Dilate to make lines thicker and more continuous
     kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     reconnected = cv2.dilate(reconnected, kernel_dilate, iterations=2)
-    
+
     # Step 6: Final corner filling - one more close to ensure corners are solid
     kernel_corner = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    reconnected = cv2.morphologyEx(reconnected, cv2.MORPH_CLOSE, kernel_corner, iterations=2)
+    reconnected = cv2.morphologyEx(
+        reconnected, cv2.MORPH_CLOSE, kernel_corner, iterations=2
+    )
 
     return reconnected
 
@@ -379,7 +393,7 @@ def detect_frames_by_contours(
     if all_areas:
         print(f"  Top 5 contour areas: {all_areas[:5]}")
         print(f"  Area range: {all_areas[0]:.0f} -> {all_areas[-1]:.0f}")
-    
+
     # Print ALL contours with bounding box info for debugging
     print("\n  === ALL CONTOURS (before filtering) ===")
     for idx, cnt in enumerate(contours):
@@ -387,8 +401,10 @@ def detect_frames_by_contours(
         bbox_area = rect_w * rect_h
         contour_area = cv2.contourArea(cnt)
         fill_ratio = contour_area / bbox_area if bbox_area > 0 else 0
-        print(f"    Contour {idx}: bbox={rect_w}x{rect_h}, bbox_area={bbox_area:.0f}, "
-              f"contour_area={contour_area:.0f}, fill_ratio={fill_ratio:.2f}")
+        print(
+            f"    Contour {idx}: bbox={rect_w}x{rect_h}, bbox_area={bbox_area:.0f}, "
+            f"contour_area={contour_area:.0f}, fill_ratio={fill_ratio:.2f}"
+        )
 
     frames = []
     filtered_stats = {
@@ -470,7 +486,6 @@ def detect_frames_by_contours(
     # Now check hierarchy relationships among valid candidates
     # Rule: If sum(children) >= 30% parent -> remove parent
     #       If sum(children) < 30% parent -> remove children
-    import logging
 
     logger = logging.getLogger(__name__)
 
@@ -516,7 +531,7 @@ def detect_frames_by_contours(
                         f"  Filtered (parent boundary with {len(children_indices)} children, {children_ratio:.1%} filled): "
                         f"bbox={frame['w']}x{frame['h']}"
                     )
-                    logger.debug(f"  → Removing parent (boundary)")
+                    logger.debug("  → Removing parent (boundary)")
                 else:
                     # Children occupy < 30% -> remove children (they're noise)
                     for child_idx in children_indices:
@@ -576,7 +591,7 @@ def detect_frames_by_contours(
         if children_ratio >= 0.30:
             # Remove parent (it's a boundary)
             frames_to_remove_spatial.add(parent_idx)
-            logger.debug(f"  → Removing spatial parent (boundary)")
+            logger.debug("  → Removing spatial parent (boundary)")
         else:
             # Remove children (they're noise)
             for child_idx in children_indices:

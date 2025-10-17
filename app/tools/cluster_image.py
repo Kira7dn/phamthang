@@ -279,7 +279,17 @@ def segment_blocks(
     pipeline.add("to_gray", to_gray)
     pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
     pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (5, 5), 0))
-    pipeline.add("adaptive_threshold", adaptive_threshold)
+    pipeline.add(
+        "adaptive_threshold",
+        lambda image: cv2.adaptiveThreshold(
+            image,
+            255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV,
+            15,
+            10,
+        ),
+    )
     pipeline.add("morph_open", lambda image: morph_open(image, (3, 3), 1))
     pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 1))
     pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonal lines
@@ -315,7 +325,7 @@ def extract_block_image_paths(
     return block_paths
 
 
-def extract_block_images(
+def cluster_blocks(
     image: Union[Path, str, np.ndarray],
     padding: int = 0,
     output_dir: Optional[Path] = None,
@@ -370,8 +380,8 @@ def main() -> None:
     if image is None:
         raise ValueError(f"Không đọc được ảnh: {img_path}")
 
-    block_images = extract_block_images(image, output_dir=output_dir)
-    print(f"Đã tách {len(block_images)} block (extract_block_images)")
+    block_images = cluster_blocks(image, output_dir=output_dir)
+    print(f"Đã tách {len(block_images)} block (cluster_blocks)")
 
 
 if __name__ == "__main__":

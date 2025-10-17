@@ -9,12 +9,22 @@ from typing import Optional
 
 from pydantic_ai import Agent, Tool
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-from app.agent.panel_verifier import AggregatedResult
 from app.tools.build_item_list import BuildItemOutput, build_item_list
+from app.models import SimplifiedFrame, Panel
 
 
 logger = logging.getLogger("app.agent.build_item")
+
+
+class Block(BaseModel):
+    block_no: str
+    panels: list[Panel] = Field(default_factory=list)
+
+
+class AggregatedResult(BaseModel):
+    blocks: list[Block] = Field(default_factory=list)
 
 
 @Tool
@@ -48,8 +58,8 @@ Your tasks:
      "material_list": [...]
    }
    - `material_list` must be exactly the tool output; do not reorder, filter, or edit entries except to ensure valid JSON serialization.
-4. Each item in `material_list` contains the fields `type`, `size`, `unit`, `quantity`, and `note`. Preserve numeric precision (round quantities to two decimals when needed) and keep the note text unchanged.
-5. Do not include any explanations or extra keys outside the schema.
+   - `material_list` contains the fields `type`, `size`, `unit`, `quantity`, and `note`. Preserve numeric precision (round quantities to two decimals when needed) and keep the note text unchanged.
+   - Do not include any explanations or extra keys outside the schema.
 """
 
 
@@ -81,10 +91,39 @@ class BuildItemAgent:
             raise RuntimeError(message)
         logger.info("OPENAI_API_KEY detected, proceeding with BuildItemAgent")
 
-    def run(self, payload: AggregatedResult) -> BuildItemOutput:
+    def run(self, data) -> BuildItemOutput:
         self._ensure_api_key()
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Accept either list[SimplifiedFrame] or AggregatedResult/dict
+        if isinstance(data, list):
+            frames: list[SimplifiedFrame] = data
+            blocks = [
+                Block(
+                    block_no=frame.id,
+                    panels=[
+                        Panel(
+                            panel_index=idx,
+                            outer_width=panel.outer_width,
+                            outer_height=panel.outer_height,
+                            inner_heights=panel.inner_heights,
+                        )
+                        for idx, panel in enumerate(frame.panels)
+                    ],
+                )
+                for frame in frames
+            ]
+            payload = AggregatedResult(blocks=blocks)
+        elif isinstance(data, AggregatedResult):
+            payload = data
+        elif isinstance(data, dict):
+            try:
+                payload = AggregatedResult.model_validate(data)
+            except Exception:
+                payload = AggregatedResult(blocks=[])
+        else:
+            payload = AggregatedResult(blocks=getattr(data, "blocks", []))
         payload_str = json.dumps(payload.model_dump(), ensure_ascii=False)
         logger.info(
             "Running BuildItemAgent block_count=%d model=%s",
