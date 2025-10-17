@@ -321,6 +321,57 @@ def remove_diagonal_lines(binary: np.ndarray) -> np.ndarray:
     return cleaned
 
 
+def remove_fold_lines(binary: np.ndarray, border_margin: int = 20) -> np.ndarray:
+    """Remove vertical/horizontal lines near image borders.
+
+    Strategy:
+    - Detect all lines using Hough
+    - Find vertical lines within border_margin from left/right edges
+    - Find horizontal lines within border_margin from top/bottom edges
+    - Paint the ENTIRE line black (not just border region)
+    """
+    h, w = binary.shape
+    cleaned = binary.copy()
+
+    # Detect all lines
+    edges = cv2.Canny(binary, 30, 100, apertureSize=3)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=30,
+        minLineLength=50,  # Catch shorter lines too
+        maxLineGap=10,
+    )
+
+    if lines is None:
+        return cleaned
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+
+        # Check if ANY endpoint touches border
+        touches_border = (
+            # Point 1 (x1, y1) touches any border
+            x1 <= border_margin
+            or x1 >= w - border_margin
+            or y1 <= border_margin
+            or y1 >= h - border_margin
+            or
+            # Point 2 (x2, y2) touches any border
+            x2 <= border_margin
+            or x2 >= w - border_margin
+            or y2 <= border_margin
+            or y2 >= h - border_margin
+        )
+
+        if touches_border:
+            # Paint the ENTIRE line black
+            cv2.line(cleaned, (x1, y1), (x2, y2), 0, 10)
+
+    return cleaned
+
+
 def reconnect_broken_frames(binary: np.ndarray) -> np.ndarray:
     """Aggressively reconnect broken frame edges after diagonal removal.
 

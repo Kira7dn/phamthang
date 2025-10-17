@@ -1,6 +1,6 @@
 from pathlib import Path
 import shutil
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import cv2
@@ -122,7 +122,7 @@ def normalize_frame(
     output_path: Optional[Path] = None,
     padding_pct: float = 0.05,
     final_short_edge: Optional[int] = None,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, float]:
     """
     Optimize image for OCR: enhance contrast, denoise, binarize.
 
@@ -175,7 +175,15 @@ def normalize_frame(
     # pipeline.add("morph_open", lambda img: morph_open(img, (1, 1), 2))
     # pipeline.add("morph_close", lambda image: morph_close(image, (1, 1), 1))
     # pipeline.add("smart_resize", smart_resize)
-    pipeline.add("resize", lambda image: resize_with_limit(image, 1920, 1920)[0])
+    # Capture scale factor from resize
+    resize_result = {"scale": 1.0}
+
+    def resize_and_capture(img):
+        resized, scale = resize_with_limit(img, 1920, 1920)
+        resize_result["scale"] = scale
+        return resized
+
+    pipeline.add("resize", resize_and_capture)
     pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
     pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
@@ -202,7 +210,7 @@ def normalize_frame(
     # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
     # pipeline.add("invert_background", invert_background)
     output_image = pipeline.run(image)
-    return output_image
+    return output_image, resize_result["scale"]
 
 
 def normalize_text(image: np.ndarray, output_path: Optional[Path] = None) -> np.ndarray:
@@ -210,30 +218,30 @@ def normalize_text(image: np.ndarray, output_path: Optional[Path] = None) -> np.
         raise ValueError("normalize_image: input image is empty or None")
     pipeline = ImagePipeline(output_path)
 
-    pipeline.add("smart_resize", lambda image: smart_resize(image, 800, 1920))
+    # pipeline.add("smart_resize", lambda image: smart_resize(image, 800, 1920))
     pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
-    pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
-    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (3, 3), 0))
+    # pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
+    # pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (3, 3), 0))
     # pipeline.add("clahe", clahe)
-    pipeline.add("adaptive_threshold", adaptive_threshold)
+    # pipeline.add("adaptive_threshold", adaptive_threshold)
     # pipeline.add("invert_background", invert_background)
-    pipeline.add("blur", lambda image: cv2.medianBlur(image, 1))
-    pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (1, 1), 0))
-    pipeline.add(
-        "enhance_edges",
-        lambda img: cv2.addWeighted(img, 1, cv2.GaussianBlur(img, (0, 0), 3), -0.5, 0),
-    )
+    # pipeline.add("blur", lambda image: cv2.medianBlur(image, 1))
+    # pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (1, 1), 0))
+    # pipeline.add(
+    #     "enhance_edges",
+    #     lambda img: cv2.addWeighted(img, 1, cv2.GaussianBlur(img, (0, 0), 3), -0.5, 0),
+    # )
     # pipeline.add("clahe", clahe)
-    pipeline.add(
-        "otsu",
-        lambda image: cv2.threshold(
-            image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )[1],
-    )
-    pipeline.add("morph_open", lambda image: morph_open(image, (2, 2), 1))
-    pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 2))
-    pipeline.add("remove_small_components", remove_small_components)
+    # pipeline.add(
+    #     "otsu",
+    #     lambda image: cv2.threshold(
+    #         image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    #     )[1],
+    # )
+    # pipeline.add("morph_open", lambda image: morph_open(image, (2, 2), 1))
+    # pipeline.add("morph_close", lambda image: morph_close(image, (3, 3), 2))
+    # pipeline.add("remove_small_components", remove_small_components)
     # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
     # pipeline.add("invert_background", invert_background)
     output_image = pipeline.run(image)

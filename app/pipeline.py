@@ -68,10 +68,24 @@ class ExtractPanelPipeline:
 
             # Normalize và detect frames
             frame_dir = _get_block_dir(self.output_dir, block_id, "normalized_frames")
-            frame_img = normalize_frame(block_img, frame_dir)
+            frame_img, scale_factor = normalize_frame(block_img, frame_dir)
 
             frame_out_dir = _get_block_dir(self.output_dir, block_id, "frame_detection")
             _, frames = detect_frames(frame_img, frame_out_dir)
+            if not frames:
+                # Add empty frame
+                simplified_frames.append(
+                    SimplifiedFrame(id=block_id, panels=[], quality_scores=None)
+                )
+                continue
+            # Scale frame coordinates back to original image dimensions
+            for frame in frames:
+                frame.x = int(frame.x / scale_factor)
+                frame.y = int(frame.y / scale_factor)
+                frame.w = int(frame.w / scale_factor)
+                frame.h = int(frame.h / scale_factor)
+                frame.area = frame.w * frame.h
+                frame.aspect = frame.h / frame.w if frame.w > 0 else 0
             logger.info(
                 f"Frame detection done - block_id={block_id}, frames_count={len(frames)}"
             )
@@ -79,6 +93,7 @@ class ExtractPanelPipeline:
             # Normalize và run OCR
             ocr_dir = _get_block_dir(self.output_dir, block_id, "normalized_ocr")
             ocr_img = normalize_text(block_img, ocr_dir)
+            # ocr_img = block_img.copy()
 
             ocr_out_dir = _get_block_dir(self.output_dir, block_id, "vision_ocr")
 
@@ -101,7 +116,11 @@ class ExtractPanelPipeline:
             if ocr_blocks and frames:
                 try:
                     # classify_dimensions now returns List[SimplifiedFrame]
-                    dims_out_dir = Path(self.output_dir, f"Block {block_id}")
+                    dims_out_dir = (
+                        Path(self.output_dir, f"Block {block_id}")
+                        if self.output_dir
+                        else None
+                    )
                     frame_results = classify_dimensions(
                         ocr_blocks, frames, output_dir=dims_out_dir
                     )
@@ -197,9 +216,15 @@ def main() -> None:
     thin5_thin3 = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
     # img_path = Path("assets/z7102259936013_b55eb7da65cf594e93eb2b8ff31af7b6.jpg")
-    img_path = Path("assets/z7070874695339_7eec1b9a231e267bca5e9e795f4f630d.jpg")
-    # test = Path("assets/442f97ecdcf251ac08e3.jpg")
-    # img_path = test
+    # img_path = Path("assets/z7070874695339_7eec1b9a231e267bca5e9e795f4f630d.jpg")
+    # img_path = Path("assets/442f97ecdcf251ac08e3.jpg")
+    # img_path = Path(
+    #     "assets/17102025/z7123665442467_dd861eca02ee6a0736de4928efb9420e.jpg"
+    # )
+    # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
+    img_path = Path(
+        "assets/17102025/z7123768633710_4cbbff36de040eaf5927947043693c29.jpg"
+    )
 
     # Generate unique output directory with UUID
     run_id = uuid.uuid4().hex[:8]  # Use first 8 chars of UUID

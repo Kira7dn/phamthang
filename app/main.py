@@ -183,9 +183,7 @@ async def extract_panel(
         # Build response with conf and materialist
         payload = {
             "conf": result.confidence,
-            "materialist": [
-                item.model_dump() for item in result.bill_of_materials.material_list
-            ],
+            "materialist": [item.model_dump() for item in result.bill_of_materials],
         }
         return JSONResponse(content=payload)
     except RuntimeError as exc:

@@ -27,6 +27,7 @@ from app.tools.blockprocess import (
     extract_edges_from_frames,
     extract_frame_dimensions,
     reconnect_broken_frames,
+    remove_fold_lines,
     remove_diagonal_lines,
     remove_text_regions,
     to_grayscale,
@@ -149,6 +150,7 @@ def detect_frames(
         "remove_text_regions", remove_text_regions
     )  # Remove text/numbers first
     pipeline.add("remove_diagonals", remove_diagonal_lines)  # Remove diagonals
+    pipeline.add("remove_fold_lines", remove_fold_lines)
     pipeline.add("connect_lines", connect_lines)  # Connect broken segments
     # pipeline.add("reconnect_frames", reconnect_broken_frames)  # Reconnect after removal
     pipeline.add("store_binary", store_binary)
@@ -205,12 +207,16 @@ if __name__ == "__main__":
     )
     thin_3 = Path("outputs/pipeline/15234d05/Block 0/frame_detection/00_origin.png")
     test = Path("outputs/pipeline/ae436b30/Block 0/normalized/00_origin.png")
+    edge_cut = Path(
+        "outputs2/pipeline/8925184c/Block 0/normalized_frames/00_origin.png"
+    )
+    edge_cut2 = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = frame3_thin
     # img_path = thin5
     # img_path = test
     # img_path = frame4_bold
     # img_path = thin8frame
-    img_path = thin_3
+    img_path = edge_cut2
     output_dir = Path("outputs", "frame_detection")
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -219,7 +225,7 @@ if __name__ == "__main__":
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
         )
-    image = normalize_frame(image, output_dir / "normalized_image")
+    image, _ = normalize_frame(image, output_dir / "normalized_image")
     if image is None:
         raise FileNotFoundError(
             f"Không đọc được ảnh: {img_path}. Kiểm tra đường dẫn và quyền truy cập."
