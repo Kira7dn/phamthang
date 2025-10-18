@@ -222,8 +222,14 @@ def main() -> None:
     #     "assets/17102025/z7123665442467_dd861eca02ee6a0736de4928efb9420e.jpg"
     # )
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
+    # img_path = Path(
+    #     "assets/17102025/z7123768633710_4cbbff36de040eaf5927947043693c29.jpg"
+    # )
+    # img_path = Path(
+    #     "assets/17102025/z7123791968224_14635243a74af983d35821e934ddfcea.jpg"
+    # )
     img_path = Path(
-        "assets/17102025/z7123768633710_4cbbff36de040eaf5927947043693c29.jpg"
+        "assets/17102025/z7123797395329_3b42c63e3bbcb86713c86bb3e2a21824.jpg"
     )
 
     # Generate unique output directory with UUID
