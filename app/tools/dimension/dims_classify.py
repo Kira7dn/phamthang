@@ -1,40 +1,28 @@
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.models import OCRTextBlock, OCRVertex, Frame, SimplifiedPanel, SimplifiedFrame
-from app.tools.dimension.score_dims import (
-    score_consistency,
-    score_frequency_alignment,
-    score_inner_sum_quality,
-    score_completeness,
-)
+from app.tools.dimension.score_dims import calculate_quality_scores
 from app.tools.dimension.normalize_frames import normalize_frames_fast
 from app.tools.dimension.scale_estimation import estimate_scale
 from app.tools.dimension.outer_candidates import generate_outer_candidates
 
 
 # ============================================================================
-# HELPER FUNCTIONS - Image Bounds & Margins
+# HELPER FUNCTIONS - Text Processing
 # ============================================================================
+
+logger = logging.getLogger(__name__)
 
 
 def _calculate_image_bounds(
     text_blocks: List[OCRTextBlock],
 ) -> tuple[float, float, float, float]:
-    """Tính toán biên ảnh từ tất cả các text blocks."""
     x_vals = [v.x or 0 for block in text_blocks for v in block.bounding_box]
     y_vals = [v.y or 0 for block in text_blocks for v in block.bounding_box]
     return min(x_vals), max(x_vals), min(y_vals), max(y_vals)
-
-
-def _calculate_margins(
-    span_x: float, span_y: float, margin: int
-) -> tuple[float, float]:
-    """Tính toán margin động dựa trên kích thước ảnh."""
-    margin_x = min(margin, max(10.0, 0.08 * span_x))
-    margin_y = min(margin, max(10.0, 0.08 * span_y))
-    return margin_x, margin_y
 
 
 # ============================================================================
@@ -98,21 +86,31 @@ def _is_near_border(
 # ============================================================================
 
 
-def _collect_outer_inner(
-    text_blocks: List[OCRTextBlock], margin: int = 0
-) -> Dict[str, List[Dict]]:
+def _collect_outer_inner(text_blocks: List[OCRTextBlock]) -> Dict[str, List[Dict]]:
     """
     Phân loại text thành outer và inner dựa trên vị trí:
     - Outer: gần mép ảnh (margin)
     - Inner: nằm bên trong
     """
     if not text_blocks:
-        return {"outer": [], "inner": []}
+        return {
+            "left_outer": [],
+            "right_outer": [],
+            "top_outer": [],
+            "bottom_outer": [],
+            "inner": [],
+        }
 
     # Tính toán biên ảnh
     x_min, x_max, y_min, y_max = _calculate_image_bounds(text_blocks)
     if x_min == x_max or y_min == y_max:
-        return {"outer": [], "inner": []}
+        return {
+            "left_outer": [],
+            "right_outer": [],
+            "top_outer": [],
+            "bottom_outer": [],
+            "inner": [],
+        }
 
     # Tạo danh sách tất cả entries
     all_entries = []
@@ -124,143 +122,59 @@ def _collect_outer_inner(
             all_entries.append(entry)
 
     if not all_entries:
-        return {"outer": [], "inner": []}
+        return {
+            "left_outer": [],
+            "right_outer": [],
+            "top_outer": [],
+            "bottom_outer": [],
+            "inner": [],
+        }
 
-    # Bước 1: Tìm chính xác 4 phần tử biên (trái, phải, trên, dưới)
-    def get_minx(e):
-        return e["cx"] - e["w"] / 2
+    def _dedup(entries: List[Dict]) -> List[Dict]:
+        seen_ids = set()
+        deduped = []
+        for e in entries:
+            eid = id(e)
+            if eid in seen_ids:
+                continue
+            seen_ids.add(eid)
+            deduped.append(e)
+        return deduped
 
-    def get_maxx(e):
-        return e["cx"] + e["w"] / 2
-
-    def get_miny(e):
-        return e["cy"] - e["h"] / 2
-
-    def get_maxy(e):
-        return e["cy"] + e["h"] / 2
-
-    def is_same_row(e1, e2, threshold=15):
-        """Kiểm tra 2 entry có cùng hàng (cy gần nhau)"""
-        return abs(e1["cy"] - e2["cy"]) <= threshold
-
-    def is_same_column(e1, e2, threshold=15):
-        """Kiểm tra 2 entry có cùng cột (cx gần nhau)"""
-        return abs(e1["cx"] - e2["cx"]) <= threshold
-
-    # Tìm 4 phần tử biên ban đầu
-    left_border = min(all_entries, key=get_minx)  # Phần tử có minx nhỏ nhất
-    right_border = max(all_entries, key=get_maxx)  # Phần tử có maxx lớn nhất
-    top_border = min(all_entries, key=get_miny)  # Phần tử có miny nhỏ nhất
-    bottom_border = max(all_entries, key=get_maxy)  # Phần tử có maxy lớn nhất
-
-    # Bước 2: Tính margin cho từng cạnh riêng biệt
-    margin_left = get_maxx(left_border) - get_minx(
-        left_border
-    )  # Width của phần tử biên trái
-    margin_right = get_maxx(right_border) - get_minx(
-        right_border
-    )  # Width của phần tử biên phải
-    margin_top = get_maxy(top_border) - get_miny(
-        top_border
-    )  # Height của phần tử biên trên
-    margin_bottom = get_maxy(bottom_border) - get_miny(
-        bottom_border
-    )  # Height của phần tử biên dưới
-
-    bounds = (x_min, x_max, y_min, y_max)
-    margins = (margin_left, margin_right, margin_top, margin_bottom)
-
-    # Bước 3: Phân loại outer/inner theo 4 biên
-    left_outer, right_outer, top_outer, bottom_outer = [], [], [], []
-    inner = []
+    left_outer, right_outer, top_outer, bottom_outer, inner = [], [], [], [], []
 
     for entry in all_entries:
         cx, cy = entry["cx"], entry["cy"]
         is_outer = False
 
-        # Kiểm tra biên trái
-        if cx - x_min < margin_left:
+        if cx - x_min < entry["w"]:
             left_outer.append(entry)
             is_outer = True
-
-        # Kiểm tra biên phải
-        if x_max - cx < margin_right:
+        if x_max - cx < entry["w"]:
             right_outer.append(entry)
             is_outer = True
-
-        # Kiểm tra biên trên
-        if cy - y_min < margin_top:
+        if cy - y_min < entry["h"]:
             top_outer.append(entry)
             is_outer = True
-
-        # Nếu không thuộc biên nào, là inner
+        if y_max - cy < entry["h"]:
+            bottom_outer.append(entry)
+            is_outer = True
         if not is_outer:
             inner.append(entry)
-        # Bước 4: Đếm số phần tử cùng cột và cùng hàng trong left_outer, right_outer, top_outer, bottom_outer
 
-        # # Bước 4: Lọc outer - loại bỏ các entry không hợp lệ
-        # filtered_outer = []
-        # for entry in left_outer + right_outer + top_outer + bottom_outer:
-        #     should_keep = True
-
-        #     # Nếu entry gần biên trái (cx gần x_min)
-        #     if entry["cx"] - x_min < margin_left:
-        #         # Loại bỏ nếu có outer entry khác thẳng HÀNG với nó
-        #         same_row = [e for e in outer if e != entry and is_same_row(e, entry)]
-        #         print("same_row:", same_row)
-        #         if same_row:
-        #             should_keep = False
-
-        #     # Nếu entry gần biên phải (cx gần x_max)
-        #     if x_max - entry["cx"] < margin_right:
-        #         # Loại bỏ nếu có outer entry khác thẳng HÀNG với nó
-        #         same_row = [e for e in outer if e != entry and is_same_row(e, entry)]
-        #         print("same_row:", same_row)
-        #         if same_row:
-        #             should_keep = False
-
-        #     # Nếu entry gần biên trên (cy gần y_min)
-        #     if entry["cy"] - y_min < margin_top:
-        #         # Loại bỏ nếu có outer entry khác thẳng CỘT với nó
-        #         same_col = [e for e in outer if e != entry and is_same_column(e, entry)]
-        #         print("same_col:", same_col)
-        #         if same_col:
-        #             should_keep = False
-        #     # Nếu entry gần biên dưới (cy gần y_max)
-        #     if y_max - entry["cy"] < margin_bottom:
-        #         # Loại bỏ nếu có outer entry khác thẳng CỘT với nó
-        #         same_col = [e for e in outer if e != entry and is_same_column(e, entry)]
-        #         print("same_col:", same_col)
-        #         if same_col:
-        #             should_keep = False
-
-        # if should_keep:
-        #     filtered_outer.append(entry)
-
-    # Gộp lại thành outer để tương thích code cũ
-    outer = left_outer + right_outer + top_outer + bottom_outer
-    # Loại bỏ duplicate (entry có thể thuộc nhiều biên)
-    seen = set()
-    unique_outer = []
-    for e in outer:
-        e_id = id(e)
-        if e_id not in seen:
-            seen.add(e_id)
-            unique_outer.append(e)
-    outer = unique_outer
-    # Chuyển các entry bị loại vào inner
-    # removed_entries = [e for e in outer if e not in filtered_outer]
-    # inner.extend(removed_entries)
-    # outer = filtered_outer
-
-    # Debug output
-    print("---Outer:", [item.get("text") for item in outer])
-    print("---Inner:", [item.get("text") for item in inner])
-
-    # Sắp xếp inner theo tọa độ (từ trên xuống, trái sang phải)
+    left_outer = _dedup(left_outer)
+    right_outer = _dedup(right_outer)
+    top_outer = _dedup(top_outer)
+    bottom_outer = _dedup(bottom_outer)
     inner.sort(key=lambda x: (x["cy"], x["cx"]))
 
-    return {"outer": outer, "inner": inner}
+    return {
+        "left_outer": left_outer,
+        "right_outer": right_outer,
+        "top_outer": top_outer,
+        "bottom_outer": bottom_outer,
+        "inner": inner,
+    }
 
 
 # ============================================================================
@@ -326,15 +240,22 @@ def _convert_frames_to_dict(frames: List[Frame]) -> List[Dict]:
     ]
 
 
-def _get_pixel_candidates(normalized_frames: List[Dict]) -> List[float]:
-    """Lấy danh sách pixel candidates từ normalized frames."""
-    candidates = []
+def _get_pixel_candidates(
+    normalized_frames: List[Dict],
+) -> tuple[List[float], List[float]]:
+    """Lấy danh sách pixel candidates riêng cho width và height từ normalized frames."""
+    width_candidates: List[float] = []
+    height_candidates: List[float] = []
     for nf in normalized_frames:
-        for key in ("normalized_w", "normalized_h"):
-            val = nf.get(key)
-            if isinstance(val, (int, float)) and val > 0:
-                candidates.append(float(val))
-    return candidates
+        w_val = nf.get("normalized_w")
+        if isinstance(w_val, (int, float)) and w_val > 0:
+            width_candidates.append(float(w_val))
+
+        h_val = nf.get("normalized_h")
+        if isinstance(h_val, (int, float)) and h_val > 0:
+            height_candidates.append(float(h_val))
+
+    return width_candidates, height_candidates
 
 
 # ============================================================================
@@ -450,48 +371,6 @@ def _deduplicate_entries(entries: List[Dict]) -> List[Dict]:
 
 
 # ============================================================================
-# HELPER FUNCTIONS - Quality Scores
-# ============================================================================
-
-
-def _calculate_quality_scores(
-    result: Dict[int, Dict], frames: List[Frame], numbers_all: List[float]
-) -> Dict:
-    """Tính toán các chỉ số chất lượng."""
-    consistency_score = score_consistency(result, frames)
-    frequency_score = score_frequency_alignment(result, numbers_all)
-    inner_sum_score = score_inner_sum_quality(result)
-    completeness_score = score_completeness(result, frames)
-
-    # Trọng số cho từng thành phần
-    weights = {
-        "consistency": 0.35,
-        "frequency": 0.25,
-        "inner_sum": 0.25,
-        "completeness": 0.15,
-    }
-
-    components = [
-        consistency_score["overall_consistency"],
-        frequency_score["overall_freq_score"],
-        inner_sum_score["inner_sum_score"],
-        completeness_score["completeness_score"],
-    ]
-
-    overall_score = sum(s * w for s, w in zip(components, weights.values())) / sum(
-        weights.values()
-    )
-
-    return {
-        "overall": round(overall_score, 4),
-        "consistency": round(consistency_score["overall_consistency"], 4),
-        "frequency": round(frequency_score["overall_freq_score"], 4),
-        "inner_sum": round(inner_sum_score["inner_sum_score"], 4),
-        "completeness": round(completeness_score["completeness_score"], 4),
-    }
-
-
-# ============================================================================
 # MAIN FUNCTION
 # ============================================================================
 
@@ -499,7 +378,6 @@ def _calculate_quality_scores(
 def classify_dimensions(
     text_blocks: List[OCRTextBlock],
     frames: List[Frame],
-    margin: int = 20,
     output_dir: Optional[Path] = None,
 ) -> List[SimplifiedFrame]:
     """
@@ -508,15 +386,28 @@ def classify_dimensions(
     Args:
         text_blocks: Danh sách các text block từ OCR
         frames: Danh sách các frame cần phân loại kích thước
-        margin: Margin để xác định outer dimensions
         output_dir: Thư mục lưu kết quả (nếu có)
 
     Returns:
         Danh sách SimplifiedFrame với thông tin kích thước
     """
     # Bước 1: Phân loại outer/inner entries
-    dim_info = _collect_outer_inner(text_blocks, margin=margin)
-    outer_entries = dim_info["outer"]
+    dim_info = _collect_outer_inner(text_blocks)
+    outer_entries = []
+    for key in ("left_outer", "right_outer", "top_outer", "bottom_outer"):
+        outer_entries.extend(dim_info.get(key, []))
+
+    # Loại bỏ trùng lặp giữa các cạnh
+    seen_outer = set()
+    deduped_outer = []
+    for entry in outer_entries:
+        e_id = id(entry)
+        if e_id in seen_outer:
+            continue
+        seen_outer.add(e_id)
+        deduped_outer.append(entry)
+    outer_entries = deduped_outer
+
     inner_entries_all = dim_info["inner"]
     entries = outer_entries + inner_entries_all
 
@@ -528,16 +419,39 @@ def classify_dimensions(
     frames_dict = _convert_frames_to_dict(frames)
     normalized_frames = normalize_frames_fast(frames_dict, tolerance_px=5)
 
-    pixel_candidates = _get_pixel_candidates(normalized_frames)
-    scale_numbers = outer_numbers if outer_numbers else numbers_all
-    scale_result = estimate_scale(pixel_candidates, scale_numbers, inlier_rel_tol=0.12)
+    width_pixels, height_pixels = _get_pixel_candidates(normalized_frames)
+    width_numbers = [n for n in outer_numbers if n == n] if outer_numbers else []
+    height_numbers = [n for n in outer_numbers if n == n] if outer_numbers else []
+
+    if not width_numbers or not height_numbers:
+        # Nếu không có outer numbers, fallback bằng cách dùng tất cả numbers cho cả width/height
+        width_numbers = numbers_all
+        height_numbers = numbers_all
+
+    combined_numbers = list(width_numbers) + list(height_numbers)
+    if not combined_numbers:
+        combined_numbers = numbers_all
+
+    scale_numbers = sorted(
+        {float(n) for n in combined_numbers if isinstance(n, (int, float))}
+    )
+    if not scale_numbers:
+        scale_numbers = numbers_all
+
+    scale_result = estimate_scale(
+        width_pixels,
+        height_pixels,
+        width_numbers,
+        height_numbers,
+        inlier_rel_tol=0.12,
+    )
     scale = scale_result.get("scale")
 
     # Bước 4: Tạo outer candidates
     if not scale:
         raise ValueError("Scale estimation failed")
 
-    outer_cands = generate_outer_candidates(
+    outer_cands_raw = generate_outer_candidates(
         normalized_frames,
         scale_numbers,
         float(scale),
@@ -548,25 +462,139 @@ def classify_dimensions(
 
     # Bước 5: Xử lý từng frame
     result: Dict[int, Dict] = {}
+
+    def _build_candidates_from_numbers(
+        nums: List[float], estimated: float, rel_tol: float = 0.20, limit: int = 3
+    ) -> List[Dict]:
+        candidates_map: Dict[float, Dict] = {}
+        for num in nums:
+            if not isinstance(num, (int, float)):
+                continue
+            value = float(num)
+            if value <= 0:
+                continue
+            rel_err = abs(value - estimated) / max(value, estimated)
+            if rel_tol > 0 and rel_err > rel_tol:
+                continue
+            score = 1.0 - (rel_err / rel_tol) if rel_tol > 0 else 0.0
+            candidates_map[value] = {
+                "value": value,
+                "score": float(max(0.0, score)),
+                "rel_err": float(rel_err),
+                "shared": False,
+            }
+        candidates = list(candidates_map.values())
+        candidates.sort(key=lambda x: (-x.get("score", 0.0), x.get("rel_err", 0.0)))
+        return candidates[:limit]
+
+    def _merge_candidate_lists(
+        primary: List[Dict], fallback: List[Dict], limit: int = 3
+    ) -> List[Dict]:
+        merged: Dict[float, Dict] = {}
+        for cand in primary:
+            value = float(cand.get("value", 0.0))
+            if value <= 0:
+                continue
+            merged[value] = cand
+        for cand in fallback:
+            value = float(cand.get("value", 0.0))
+            if value <= 0 or value in merged:
+                continue
+            merged[value] = cand
+        merged_list = list(merged.values())
+        merged_list.sort(
+            key=lambda x: (-float(x.get("score", 0.0)), float(x.get("rel_err", 0.0)))
+        )
+        return merged_list[:limit]
+
     for i, frame in enumerate(frames):
-        # Lấy outer candidates cho frame này
-        cands = (
-            outer_cands[i] if i < len(outer_cands) else {"w_cands": [], "h_cands": []}
+        base_cands = (
+            outer_cands_raw[i]
+            if i < len(outer_cands_raw)
+            else {"w_cands": [], "h_cands": [], "pairs": []}
         )
 
-        # Chọn outer width và height
-        estimated_w = float(frame.w) * float(scale)
-        estimated_h = float(frame.h) * float(scale)
+        left_entries = [
+            entry
+            for entry in dim_info.get("left_outer", [])
+            if _is_aligned(entry, frame)
+        ]
+        right_entries = [
+            entry
+            for entry in dim_info.get("right_outer", [])
+            if _is_aligned(entry, frame)
+        ]
+        top_entries = [
+            entry
+            for entry in dim_info.get("top_outer", [])
+            if _is_aligned(entry, frame)
+        ]
+        bottom_entries = [
+            entry
+            for entry in dim_info.get("bottom_outer", [])
+            if _is_aligned(entry, frame)
+        ]
 
-        chosen_w = _select_best_candidate(cands.get("w_cands", []), estimated_w, scale)
-        chosen_h = _select_best_candidate(cands.get("h_cands", []), estimated_h, scale)
+        frame_width_entries = left_entries + right_entries
+        frame_height_entries = top_entries + bottom_entries
 
-        # Lọc và chọn inner entries
-        inner_entries = _filter_inner_candidates(entries, frame, chosen_w, chosen_h)
+        frame_width_numbers = _extract_numbers_from_entries(frame_width_entries)
+        frame_height_numbers = _extract_numbers_from_entries(frame_height_entries)
+
+        width_scale_numbers = frame_width_numbers or width_numbers
+        height_scale_numbers = frame_height_numbers or height_numbers
+
+        frame_scale_result = estimate_scale(
+            [float(frame.w)],
+            [float(frame.h)],
+            width_scale_numbers,
+            height_scale_numbers,
+            inlier_rel_tol=0.12,
+        )
+        frame_scale = frame_scale_result.get("scale") or scale
+
+        estimated_w = float(frame.w) * float(frame_scale)
+        estimated_h = float(frame.h) * float(frame_scale)
+
+        frame_w_candidates = _build_candidates_from_numbers(
+            frame_width_numbers, estimated_w
+        )
+        frame_h_candidates = _build_candidates_from_numbers(
+            frame_height_numbers, estimated_h
+        )
+
+        base_w_cands = base_cands.get("w_cands", [])
+        base_h_cands = base_cands.get("h_cands", [])
+
+        w_candidates = _merge_candidate_lists(frame_w_candidates, base_w_cands)
+        h_candidates = _merge_candidate_lists(frame_h_candidates, base_h_cands)
+
+        if not w_candidates:
+            w_candidates = base_w_cands
+        if not h_candidates:
+            h_candidates = base_h_cands
+
+        pairs = [
+            {"width_cand": w_cand, "height_cand": h_cand}
+            for w_cand in w_candidates
+            for h_cand in h_candidates
+        ]
+        if not pairs:
+            pairs = base_cands.get("pairs", [])
+
+        chosen_w = _select_best_candidate(w_candidates, estimated_w, frame_scale)
+        chosen_h = _select_best_candidate(h_candidates, estimated_h, frame_scale)
+
+        frame_entries = [e for e in entries if _is_aligned(e, frame)]
+        inner_entries = _filter_inner_candidates(
+            frame_entries, frame, chosen_w, chosen_h
+        )
         inner_entries = _select_best_column_group(inner_entries, frame.w, chosen_h)
         inner_entries = _deduplicate_entries(inner_entries)
 
         inner_heights = [e["text"] for e in inner_entries]
+        selected_ids = {id(e) for e in inner_entries}
+        unselected_entries = [e for e in frame_entries if id(e) not in selected_ids]
 
         result[i] = {
             "width": chosen_w,
@@ -574,11 +602,12 @@ def classify_dimensions(
             "inner_heights": inner_heights,
             "frame_px_w": frame.w,
             "frame_px_h": frame.h,
+            "outer_pairs": pairs,
+            "unselected": unselected_entries,
         }
 
     # Bước 6: Tính toán chỉ số chất lượng
-    quality_scores = _calculate_quality_scores(result, frames, numbers_all)
-
+    quality_scores = calculate_quality_scores(result, frames, numbers_all)
     # Bước 7: Tạo SimplifiedFrame list
     simplified_frames = []
     for i in range(len(frames)):
@@ -629,6 +658,8 @@ def classify_dimensions(
 # ============================================================================
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(message)s")
+
     # Iterate all JSON samples in sample directory
     sample_dir = Path("app/tools/dimension/sample")
     json_files = sorted(sample_dir.glob("*.json"))

@@ -7,14 +7,9 @@ Faster scale estimation using vectorized operations.
 
 from typing import Any, Dict, List, Tuple
 import logging
-import json
-from pathlib import Path
 import numpy as np
 
-from app.tools.dimension.normalize_frames import normalize_frames_fast
-
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 def closest_number_np(
@@ -37,8 +32,10 @@ def closest_number_np(
 
 
 def estimate_scale(
-    pixel_candidates: List[float],
-    numbers: List[float],
+    width_candidates: List[float],
+    height_candidates: List[float],
+    width_numbers: List[float],
+    height_numbers: List[float],
     inlier_rel_tol: float = 0.12,
     max_seed_pairs: int = 400,
 ) -> Dict[str, Any]:
@@ -49,12 +46,48 @@ def estimate_scale(
     - Least-squares refinement
     """
     out = {"scale": None}
-    if not pixel_candidates or not numbers:
+    if (not width_candidates and not height_candidates) or (
+        not width_numbers and not height_numbers
+    ):
         return out
 
-    px = np.unique(np.round(pixel_candidates).astype(float))
-    nums = np.unique(np.array(numbers, dtype=float))
+    width_arr = (
+        np.unique(np.round(np.array(width_candidates, dtype=float)).astype(float))
+        if width_candidates
+        else np.array([], dtype=float)
+    )
+    height_arr = (
+        np.unique(np.round(np.array(height_candidates, dtype=float)).astype(float))
+        if height_candidates
+        else np.array([], dtype=float)
+    )
+
+    width_nums_arr = (
+        np.unique(np.array(width_numbers, dtype=float))
+        if width_numbers
+        else np.array([], dtype=float)
+    )
+    height_nums_arr = (
+        np.unique(np.array(height_numbers, dtype=float))
+        if height_numbers
+        else np.array([], dtype=float)
+    )
+
+    px = (
+        np.hstack((width_arr, height_arr))
+        if (width_arr.size or height_arr.size)
+        else np.array([], dtype=float)
+    )
+    nums = (
+        np.hstack((width_nums_arr, height_nums_arr))
+        if (width_nums_arr.size or height_nums_arr.size)
+        else np.array([], dtype=float)
+    )
+
     px = px[px > 0]
+    nums = nums[nums > 0]
+    if nums.size:
+        nums = np.unique(nums)
 
     if len(px) == 0 or len(nums) == 0:
         return out
@@ -120,7 +153,7 @@ def estimate_scale(
                     best["avg_rel_error"] = best["refined_avg_rel_error"]
 
     out.update(best)
-    logger.info(
+    logger.debug(
         f"estimate_scale_fast → scale={out.get('scale'):.6f}, "
         f"inliers={out.get('inliers_count')}, rel_err={out.get('avg_rel_error'):.4f}"
     )

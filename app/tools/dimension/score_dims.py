@@ -13,13 +13,16 @@ Overall Score = weighted average của các sub-scores
 from collections import Counter
 from typing import Dict, List, Optional
 import logging
+from collections import defaultdict
 
 from app.models import Frame
 
 logger = logging.getLogger(__name__)
 
 
-def score_consistency(results: Dict[int, Dict], frames: List[Frame]) -> Dict[str, float]:
+def score_consistency(
+    results: Dict[int, Dict], frames: List[Frame]
+) -> Dict[str, float]:
     """
     Chấm điểm tính nhất quán: các frame có cùng pixel dimension phải có cùng mm dimension.
 
@@ -40,7 +43,6 @@ def score_consistency(results: Dict[int, Dict], frames: List[Frame]) -> Dict[str
     Returns:
         Dict với các điểm nhất quán
     """
-    from collections import defaultdict
 
     if not results or not frames:
         return {
@@ -98,18 +100,14 @@ def score_frequency_alignment(
     results: Dict[int, Dict], numbers: List[float]
 ) -> Dict[str, float]:
     """
-    Chấm điểm theo tần suất: ưu tiên outer/inner xuất hiện nhiều trong OCR.
+    Chấm điểm theo độ lặp số trong OCR: mọi giá trị (outer hoặc inner) chỉ nên
+    xuất hiện tối đa bằng số frame.
 
     Logic:
-    - Đếm tần suất mỗi số trong OCR numbers
-    - Outer dimensions nên xuất hiện ít (LOW freq) hoặc vừa phải
-    - Inner dimensions nên xuất hiện nhiều (HIGH freq) nếu có nhiều frame
-    - Score dựa trên tỷ lệ outer/inner có frequency phù hợp
-    - Trả về: {
-        'outer_freq_score': điểm outer (cao nếu freq hợp lý),
-        'inner_freq_score': điểm inner (cao nếu freq cao),
-        'overall_freq_score': avg of outer + inner
-      }
+    - Chuẩn hóa các số từ OCR và đếm tần suất xuất hiện.
+    - Với mỗi giá trị outer/inner, nếu số lần xuất hiện <= số frame → điểm 1.0.
+    - Nếu số lần xuất hiện vượt quá số frame → điểm giảm theo tỷ lệ allowable / actual.
+    - Kết quả trả về gồm điểm outer, inner và trung bình overall.
 
     Args:
         results: Dict[frame_idx, {'width': str, 'height': str, 'inner_heights': [str]}]
@@ -120,12 +118,26 @@ def score_frequency_alignment(
     """
     if not results or not numbers:
         return {
-            "outer_freq_score": 0.5,
-            "inner_freq_score": 0.5,
-            "overall_freq_score": 0.5,
+            "outer_freq_score": 0,
+            "inner_freq_score": 0,
+            "overall_freq_score": 0,
         }
 
-    freq = Counter(numbers)
+    def _normalize_number(value) -> Optional[float]:
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return None
+        if num != num:
+            return None
+        return round(num, 4)
+
+    freq: Counter[float] = Counter()
+    for num in numbers:
+        normalized = _normalize_number(num)
+        if normalized is not None:
+            freq[normalized] += 1
+
     num_frames = len(results)
 
     # Collect all outers and inners
@@ -135,104 +147,106 @@ def score_frequency_alignment(
     for i in results:
         all_inners.extend(results[i].get("inner_heights", []))
 
-    # Score outers: expect LOW to MEDIUM frequency
-    # Good: freq <= num_frames (shared or unique per frame)
-    # Bad: freq >> num_frames (too common, likely inner)
-    outer_scores = []
-    for val in set(outer_widths + outer_heights):
-        if val:
-            val_freq = freq.get(float(val), 0)
-            # Ideal: 1 <= freq <= num_frames * 1.5
-            if val_freq <= num_frames * 1.5:
-                outer_scores.append(1.0)
-            else:
-                # Penalize high frequency
-                penalty = min(1.0, (val_freq - num_frames * 1.5) / (num_frames * 2))
-                outer_scores.append(max(0.0, 1.0 - penalty))
+    def _score_group(values: List) -> List[float]:
+        # Chuẩn hóa và đếm tần suất trong kết quả
+        normalized_values_list = [
+            _normalize_number(val)
+            for val in values
+            if _normalize_number(val) is not None
+        ]
+        if not normalized_values_list:
+            return []
 
-    # Score inners: expect HIGH frequency (nhiều frame dùng chung)
-    # Good: freq >= num_frames * 0.5 (common across frames)
-    # Bad: freq = 1 (unique, unlikely for inner)
-    inner_scores = []
-    for val in set(all_inners):
-        if val:
-            val_freq = freq.get(float(val), 0)
-            # Ideal: freq >= num_frames * 0.5
-            if val_freq >= num_frames * 0.5:
-                inner_scores.append(1.0)
-            elif val_freq >= 2:
-                # Medium freq: partial score
-                inner_scores.append(0.7)
-            else:
-                # freq = 1: low score
-                inner_scores.append(0.3)
+        result_freq = Counter(normalized_values_list)
+        group_scores: List[float] = []
+
+        for val, count_in_result in result_freq.items():
+            val_freq_in_ocr = freq.get(val, 0)
+            if val_freq_in_ocr <= 0:
+                group_scores.append(0.0)
+                continue
+
+            # Cho phép dùng tối đa val_freq_in_ocr * num_frames lần
+            allowable = float(val_freq_in_ocr * num_frames)
+            score = min(1.0, allowable / float(count_in_result))
+            group_scores.append(score)
+
+        return group_scores
+
+    outer_scores = _score_group(outer_widths + outer_heights)
+    inner_scores = _score_group(all_inners)
 
     return {
         "outer_freq_score": (
-            sum(outer_scores) / len(outer_scores) if outer_scores else 0.5
+            sum(outer_scores) / len(outer_scores) if outer_scores else 0
         ),
         "inner_freq_score": (
-            sum(inner_scores) / len(inner_scores) if inner_scores else 0.5
+            sum(inner_scores) / len(inner_scores) if inner_scores else 0
         ),
         "overall_freq_score": (
             (sum(outer_scores) + sum(inner_scores))
             / (len(outer_scores) + len(inner_scores))
             if (outer_scores or inner_scores)
-            else 0.5
+            else 0
         ),
     }
 
 
-def score_inner_sum_quality(
-    results: Dict[int, Dict], tolerance: float = 0.03
-) -> Dict[str, float]:
+def score_inner_sum_quality(results: Dict[int, Dict]) -> Dict[str, float]:
+    """Đánh giá tổng chiều cao các inner so với outer height.
+
+    - Điểm mỗi frame = tỷ lệ `sum(inner) / outer` nếu ≤ 1.
+    - Nếu tổng inner vượt outer, phạt nặng: điểm = max(0, 1 - (ratio - 1) * 10).
+    - Trả về trung bình điểm, tỷ lệ trung bình và số frame khớp hoàn hảo.
     """
-    Chấm điểm chất lượng tổng inner: sum(inner_heights) có khớp với outer_height không.
 
-    Logic:
-    - Với mỗi frame: tính sum(inner_heights)
-    - So sánh với outer_height
-    - Relative error = |sum(inner) - outer_height| / outer_height
-    - Score = 1.0 - min(rel_error, tolerance) / tolerance
-    - Trả về: {
-        'inner_sum_score': avg score across frames,
-        'perfect_sum_matches': số frame có sum(inner) = outer_height
-      }
-
-    Args:
-        results: Dict[frame_idx, {'width': str, 'height': str, 'inner_heights': [str]}]
-        tolerance: ngưỡng relative error tối đa (mặc định 3%)
-
-    Returns:
-        Dict với điểm chất lượng tổng inner
-    """
     if not results:
-        return {"inner_sum_score": 0.0, "perfect_sum_matches": 0, "total_frames": 0}
+        return {
+            "inner_sum_score": 0.0,
+            "inner_sum_ratio": 0.0,
+            "perfect_sum_matches": 0,
+            "total_frames": 0,
+        }
 
-    scores = []
-    perfect_count = 0
+    scores: List[float] = []
+    ratios: List[float] = []
+    perfect_matches = 0
 
-    for i in results:
-        dims = results[i]
+    for dims in results.values():
         outer_h = float(dims.get("height", 0))
-        inner_heights = [float(x) for x in dims.get("inner_heights", [])]
+        inner_values = [float(x) for x in dims.get("inner_heights", [])]
 
-        if outer_h > 0 and inner_heights:
-            sum_inner = sum(inner_heights)
-            rel_err = abs(sum_inner - outer_h) / outer_h
-            score = max(0.0, 1.0 - min(rel_err, tolerance) / tolerance)
-            scores.append(score)
+        if outer_h <= 0:
+            scores.append(0.0)
+            ratios.append(0.0)
+            continue
 
-            if abs(sum_inner - outer_h) < 0.01:  # practically zero
-                perfect_count += 1
-        elif not inner_heights:
-            # No inner heights: neutral score
-            scores.append(0.5)
+        if not inner_values:
+            scores.append(0.0)
+            ratios.append(0.0)
+            continue
+
+        inner_sum = sum(inner_values)
+        ratio = inner_sum / outer_h
+        ratios.append(ratio)
+
+        if abs(inner_sum - outer_h) < 0.01:
+            perfect_matches += 1
+
+        if ratio <= 1.0:
+            scores.append(ratio)
+        else:
+            penalty = max(0.0, 1.0 - (ratio - 1.0) * 10.0)
+            scores.append(penalty)
+
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    avg_ratio = sum(ratios) / len(ratios) if ratios else 0.0
 
     return {
-        "inner_sum_score": sum(scores) / len(scores) if scores else 0.0,
-        "perfect_sum_matches": perfect_count,
-        "total_frames": len(results),
+        "inner_sum_score": avg_score,
+        "inner_sum_ratio": avg_ratio,
+        "perfect_sum_matches": perfect_matches,
+        "total_frames": len(scores),
     }
 
 
@@ -388,6 +402,89 @@ def compute_overall_score(
     output["weights_used"] = weights
 
     return output
+
+
+def calculate_quality_scores(
+    result: Dict[int, Dict], frames: List[Frame], numbers_all: List[float]
+) -> Dict:
+    """Tính toán các chỉ số chất lượng."""
+
+    def _normalize_number(value) -> Optional[float]:
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return None
+        if num != num:
+            return None
+        return round(num, 4)
+
+    def _compute_unused_numbers() -> tuple[List[float], float]:
+        normalized_numbers = [_normalize_number(n) for n in numbers_all]
+        normalized_numbers = [n for n in normalized_numbers if n is not None]
+        if not normalized_numbers:
+            return [], 1.0
+
+        usage_counter = Counter(normalized_numbers)
+
+        def consume(raw_value):
+            num = _normalize_number(raw_value)
+            if num is None:
+                return
+            if usage_counter.get(num, 0) > 0:
+                usage_counter[num] -= 1
+
+        for dims in result.values():
+            consume(dims.get("width"))
+            consume(dims.get("height"))
+            for inner_value in dims.get("inner_heights", []):
+                consume(inner_value)
+
+        unused_values: List[float] = []
+        for value, count in usage_counter.items():
+            if count > 0:
+                unused_values.extend([value] * count)
+
+        used_count = len(normalized_numbers) - len(unused_values)
+        score = used_count / len(normalized_numbers)
+        unused_values.sort()
+        return unused_values, score
+
+    consistency_score = score_consistency(result, frames)
+    frequency_score = score_frequency_alignment(result, numbers_all)
+    inner_sum_score = score_inner_sum_quality(result)
+    completeness_score = score_completeness(result, frames)
+    unused_numbers, unused_score = _compute_unused_numbers()
+
+    # Trọng số cho từng thành phần
+    weights = {
+        "consistency": 0.30,
+        "frequency": 0.20,
+        "inner_sum": 0.20,
+        "completeness": 0.15,
+        "unused_numbers": 0.15,
+    }
+
+    components = [
+        consistency_score["overall_consistency"],
+        frequency_score["overall_freq_score"],
+        inner_sum_score["inner_sum_score"],
+        completeness_score["completeness_score"],
+        unused_score,
+    ]
+
+    overall_score = sum(s * w for s, w in zip(components, weights.values())) / sum(
+        weights.values()
+    )
+
+    return {
+        "overall": round(overall_score, 4),
+        "consistency": round(consistency_score["overall_consistency"], 4),
+        "frequency": round(frequency_score["overall_freq_score"], 4),
+        "inner_sum": round(inner_sum_score["inner_sum_score"], 4),
+        "completeness": round(completeness_score["completeness_score"], 4),
+        "unused_numbers_score": round(unused_score, 4),
+        "unused_numbers": unused_numbers,
+    }
 
 
 def print_score_report(score_output: Dict, verbose: bool = True):

@@ -223,7 +223,7 @@ def ocr_text(
         response = requests.post(VISION_ENDPOINT, json=payload, timeout=15)
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        raise ValueError(f"Failed to make request to Vision API: {exc}")
+        raise ValueError(f"Failed to make request to Vision API: {exc}") from exc
 
     response_json = response.json()
     vision_responses = response_json.get("responses", [])

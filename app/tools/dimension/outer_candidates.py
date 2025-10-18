@@ -1,5 +1,5 @@
-from collections import Counter, defaultdict
-from typing import List, Dict, Any, Tuple
+from collections import Counter
+from typing import List, Dict, Any
 import logging
 import json
 from pathlib import Path
@@ -144,7 +144,7 @@ def generate_outer_candidates(
     # group similar frames to compute candidates once per group
     groups = _group_frames(frames, x_tol=x_tol, y_tol=y_tol, wh_rel_tol=wh_rel_tol)
     layout = _detect_layout_from_groups(groups)
-    logger.info("Layout from groups: %s (groups=%d)", layout, len(groups))
+    logger.debug("Layout from groups: %s (groups=%d)", layout, len(groups))
 
     # prepare results slot for each frame
     results: List[Dict[str, Any]] = [
@@ -181,7 +181,7 @@ def generate_outer_candidates(
         h_min, h_max = max(0.0, est_h * (1 - window_ratio)), est_h * (1 + window_ratio)
 
         if debug:
-            logger.info(
+            logger.debug(
                 "Group %d indices=%s est_w=%.3f est_h=%.3f w_window=[%.1f,%.1f] h_window=[%.1f,%.1f] prefer_w=%s prefer_h=%s",
                 g_idx,
                 indices,
@@ -198,7 +198,7 @@ def generate_outer_candidates(
         # collect width candidates from unique numbers first
         w_candidates: List[Dict[str, Any]] = []
         for n in unique_numbers:
-            if not (w_min <= n <= w_max):
+            if not w_min <= n <= w_max:
                 continue
             score = _score_by_rel_tol(
                 est_w, n, rel_tol, prefer_shared=prefer_shared_width
@@ -213,7 +213,7 @@ def generate_outer_candidates(
         # fallback to repeated numbers if none found
         if not w_candidates:
             for n in repeated_numbers:
-                if not (w_min <= n <= w_max):
+                if not w_min <= n <= w_max:
                     continue
                 score = (
                     _score_by_rel_tol(est_w, n, rel_tol, prefer_shared=False) * 0.6
@@ -234,7 +234,7 @@ def generate_outer_candidates(
         # collect height candidates (same logic)
         h_candidates: List[Dict[str, Any]] = []
         for n in unique_numbers:
-            if not (h_min <= n <= h_max):
+            if not h_min <= n <= h_max:
                 continue
             score = _score_by_rel_tol(
                 est_h, n, rel_tol, prefer_shared=prefer_shared_height
@@ -248,7 +248,7 @@ def generate_outer_candidates(
 
         if not h_candidates:
             for n in repeated_numbers:
-                if not (h_min <= n <= h_max):
+                if not h_min <= n <= h_max:
                     continue
                 score = _score_by_rel_tol(est_h, n, rel_tol, prefer_shared=False) * 0.6
                 if score <= 0.0:
@@ -264,8 +264,8 @@ def generate_outer_candidates(
         h_candidates = h_candidates[:k]
 
         if debug:
-            logger.info("Group %d w_cands=%s", g_idx, w_candidates)
-            logger.info("Group %d h_cands=%s", g_idx, h_candidates)
+            logger.debug("Group %d w_cands=%s", g_idx, w_candidates)
+            logger.debug("Group %d h_cands=%s", g_idx, h_candidates)
 
         # assign to all frames in this group
         for i in indices:
@@ -298,13 +298,21 @@ def main():
                 if isinstance(val, (int, float)) and val > 0:
                     pixel_candidates.append(float(val))
 
-        scale_result = estimate_scale(pixel_candidates, numbers)
+        width_numbers = [float(n) for n in sample.get("width_numbers", numbers)]
+        height_numbers = [float(n) for n in sample.get("height_numbers", numbers)]
+
+        scale_result = estimate_scale(
+            pixel_candidates,
+            [],
+            width_numbers,
+            height_numbers,
+        )
         scale = scale_result.get("scale")
         if not scale:
-            logger.info("Sample %s (%s): skipped (no scale)", sample_id, sample_name)
+            logger.debug("Sample %s (%s): skipped (no scale)", sample_id, sample_name)
             continue
 
-        logger.info(
+        logger.debug(
             "Sample %s (%s): scale=%.6f inliers=%s rel_err=%s",
             sample_id,
             sample_name,
@@ -327,7 +335,7 @@ def main():
         )
 
         for idx, frame_cands in enumerate(candidates):
-            logger.info(
+            logger.debug(
                 " Frame %d: est_mm=%s w_cands=%s h_cands=%s",
                 idx,
                 frame_cands.get("est_mm"),
@@ -337,5 +345,5 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
+    logging.basicConfig(level=logging.debug, format="%(levelname)s:%(message)s")
     main()

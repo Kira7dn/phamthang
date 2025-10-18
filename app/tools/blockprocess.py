@@ -8,20 +8,23 @@ Strategy:
 4. Combine results for accurate frame dimensions
 """
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 
 import logging
+import math
+from itertools import combinations
 import cv2
 import numpy as np
 
 from app.models import BoundingRect
+
 
 # Constants for frame detection
 MIN_FRAME_PERCENTAGE = 0.015  # 1.5% of image area (lowered to catch smaller frames)
 MIN_FRAME_PIXELS = 15000  # Absolute minimum size (lowered from 20000)
 MIN_DIMENSION = 40  # Minimum width or height
 MAX_ASPECT_RATIO = 15.0  # Maximum elongation
-MIN_FILL_RATIO = 0.3  # Minimum fill ratio for closed contours
+MIN_FILL_RATIO = 0.7  # Minimum fill ratio for closed contours
 MIN_CHILDREN_FOR_BOUNDARY = 2  # Parent with 2+ children is boundary
 
 # Constants for line detection and morphology
@@ -30,6 +33,9 @@ SEGMENT_POSITION_TOLERANCE = 5
 MORPH_KERNEL_SIZE = (5, 5)
 TEXT_MAX_SIZE = 120
 TEXT_MAX_AREA = 10000
+MAX_CORNER_ENDPOINT_DISTANCE = 30
+
+logger = logging.getLogger(__name__)
 
 
 def draw_rectangles(
@@ -92,6 +98,7 @@ def remove_text_regions(binary: np.ndarray) -> np.ndarray:
     - Detect and remove small dense components (text)
     - Use morphology to clean up
     """
+    logger = logging.getLogger("remove_text_regions")
     h, w = binary.shape
     cleaned = binary.copy()
 
@@ -159,6 +166,7 @@ def connect_lines(binary: np.ndarray) -> np.ndarray:
     - Extend and connect segments in the same group
     - Redraw connected lines
     """
+    logger = logging.getLogger("connect_lines")
     h, w = binary.shape
 
     # Detect edges
@@ -285,6 +293,103 @@ def connect_lines(binary: np.ndarray) -> np.ndarray:
     return result
 
 
+def restore_missing_corners(binary: np.ndarray) -> np.ndarray:
+    """Khôi phục các góc bị thiếu bằng cách kéo dài các đoạn thẳng gần nhau."""
+    logger = logging.getLogger("restore_missing_corners")
+    h, w = binary.shape
+
+    edges = cv2.Canny(binary, 50, 150, apertureSize=3)
+    lines = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 180,
+        threshold=50,
+        minLineLength=50,
+        maxLineGap=20,
+    )
+
+    if lines is None:
+        return binary
+
+    def compute_intersection(
+        line1: np.ndarray, line2: np.ndarray
+    ) -> Optional[Tuple[int, int]]:
+        x1, y1, x2, y2 = map(float, line1)
+        x3, y3, x4, y4 = map(float, line2)
+
+        a1 = y2 - y1
+        b1 = x1 - x2
+        c1 = a1 * x1 + b1 * y1
+
+        a2 = y4 - y3
+        b2 = x3 - x4
+        c2 = a2 * x3 + b2 * y3
+
+        det = a1 * b2 - a2 * b1
+        if abs(det) < 1e-6:
+            return None
+
+        px = (b2 * c1 - b1 * c2) / det
+        py = (a1 * c2 - a2 * c1) / det
+        return int(round(px)), int(round(py))
+
+    def endpoint_distance(line: np.ndarray, point: Tuple[int, int]) -> float:
+        x1, y1, x2, y2 = line
+        dist_start = math.hypot(point[0] - x1, point[1] - y1)
+        dist_end = math.hypot(point[0] - x2, point[1] - y2)
+        return min(dist_start, dist_end)
+
+    line_mask = np.zeros_like(binary)
+    restored = 0
+    seen_corners: Set[Tuple[int, int]] = set()
+
+    for line1, line2 in combinations(lines, 2):
+        intersection = compute_intersection(line1[0], line2[0])
+        if intersection is None:
+            continue
+
+        ix, iy = intersection
+        if ix < -5 or iy < -5 or ix > w + 5 or iy > h + 5:
+            continue
+
+        v1 = np.array(
+            [line1[0][2] - line1[0][0], line1[0][3] - line1[0][1]], dtype=float
+        )
+        v2 = np.array(
+            [line2[0][2] - line2[0][0], line2[0][3] - line2[0][1]], dtype=float
+        )
+
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 < 1e-6 or norm2 < 1e-6:
+            continue
+
+        cos_angle = np.clip(np.dot(v1, v2) / (norm1 * norm2), -1.0, 1.0)
+        angle = np.degrees(np.arccos(cos_angle))
+        if not (70 < angle < 110):
+            continue
+
+        if endpoint_distance(line1[0], (ix, iy)) > MAX_CORNER_ENDPOINT_DISTANCE:
+            continue
+        if endpoint_distance(line2[0], (ix, iy)) > MAX_CORNER_ENDPOINT_DISTANCE:
+            continue
+
+        corner = (ix, iy)
+        if corner in seen_corners:
+            continue
+
+        cv2.line(line_mask, (line1[0][0], line1[0][1]), corner, 255, 3)
+        cv2.line(line_mask, (line2[0][0], line2[0][1]), corner, 255, 3)
+        seen_corners.add(corner)
+        restored += 1
+
+    if restored == 0:
+        return binary
+
+    logger.debug(f"Khôi phục {restored} góc bị thiếu")
+    return cv2.bitwise_or(binary, line_mask)
+
+
 def is_axis_aligned(angle: float) -> bool:
     """Check if line angle is horizontal or vertical."""
     return angle < 15 or angle > 165 or (75 < angle < 105)
@@ -297,6 +402,7 @@ def remove_diagonal_lines(binary: np.ndarray) -> np.ndarray:
     - Use Hough Lines to detect and classify lines by angle
     - Remove diagonal lines by painting them black
     """
+    logger = logging.getLogger("remove_diagonal_lines")
     # Detect all lines using Hough
     edges = cv2.Canny(binary, 30, 100, apertureSize=3)
     lines = cv2.HoughLinesP(
@@ -330,6 +436,7 @@ def remove_fold_lines(binary: np.ndarray, border_margin: int = 20) -> np.ndarray
     - Find horizontal lines within border_margin from top/bottom edges
     - Paint the ENTIRE line black (not just border region)
     """
+    logger = logging.getLogger("remove_fold_lines")
     h, w = binary.shape
     cleaned = binary.copy()
 
@@ -378,6 +485,7 @@ def reconnect_broken_frames(binary: np.ndarray) -> np.ndarray:
     This is stronger than connect_lines and specifically targets
     gaps created by diagonal line removal and text removal.
     """
+    logger = logging.getLogger("app.tools.reconnect_broken_frames")
     h, w = binary.shape
 
     # Step 1: Strong horizontal closing to connect horizontal breaks
@@ -425,6 +533,8 @@ def detect_frames_by_contours(
     issues with internal annotations (dimension lines, diagonal lines, etc.)
     Uses hierarchy to filter out parent contours that only serve as boundaries.
     """
+    logger = logging.getLogger("detect_frames_by_contours")
+
     h, w = cleaned_binary.shape
     image_area = w * h
     min_frame_area = max(image_area * min_frame_percentage, min_frame_pixels)
@@ -434,7 +544,7 @@ def detect_frames_by_contours(
     contours, hierarchy = cv2.findContours(
         cleaned_binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
     )
-    print(
+    logger.debug(
         f"Found {len(contours)} total contours (image: {w}x{h}, min_area: {min_frame_area:.0f})"
     )
 
@@ -442,20 +552,15 @@ def detect_frames_by_contours(
     all_areas = [cv2.contourArea(cnt) for cnt in contours]
     all_areas.sort(reverse=True)
     if all_areas:
-        print(f"  Top 5 contour areas: {all_areas[:5]}")
-        print(f"  Area range: {all_areas[0]:.0f} -> {all_areas[-1]:.0f}")
+        logger.debug(f"  Top 5 contour areas: {all_areas[:5]}")
+        logger.debug(f"  Area range: {all_areas[0]:.0f} -> {all_areas[-1]:.0f}")
 
-    # Print ALL contours with bounding box info for debugging
-    print("\n  === ALL CONTOURS (before filtering) ===")
+    # logger.debug ALL contours with bounding box info for debugging
     for idx, cnt in enumerate(contours):
         x, y, rect_w, rect_h = cv2.boundingRect(cnt)
         bbox_area = rect_w * rect_h
         contour_area = cv2.contourArea(cnt)
         fill_ratio = contour_area / bbox_area if bbox_area > 0 else 0
-        print(
-            f"    Contour {idx}: bbox={rect_w}x{rect_h}, bbox_area={bbox_area:.0f}, "
-            f"contour_area={contour_area:.0f}, fill_ratio={fill_ratio:.2f}"
-        )
 
     frames = []
     filtered_stats = {
@@ -481,21 +586,22 @@ def detect_frames_by_contours(
         # 1. Filter out very small frames (< 2% image or < 20k pixels)
         if bbox_area < min_frame_area:
             filtered_stats["too_small"] += 1
-            debug_info.append(
-                f"  Filtered (too small): bbox={rect_w}x{rect_h}, area={bbox_area:.0f} < {min_frame_area:.0f}"
-            )
+            if bbox_area > min_frame_area / 10:
+                debug_info.append(
+                    f"⚠ Filtered (too small): bbox={rect_w}x{rect_h}, area={bbox_area:.0f} < {min_frame_area:.0f}"
+                )
             continue
 
         # 2. Filter out frames that are too large (> 90% of image in BOTH dimensions)
         if rect_w > w * 0.9 and rect_h > h * 0.9:
             filtered_stats["bad_aspect"] += 1
-            debug_info.append(f"  Filtered (too large): bbox={rect_w}x{rect_h}")
+            debug_info.append(f"⚠ Filtered (too large): bbox={rect_w}x{rect_h}")
             continue
 
         # 3. Filter out very thin frames (likely noise or dimension lines)
         if rect_w < MIN_DIMENSION or rect_h < MIN_DIMENSION:
             filtered_stats["bad_aspect"] += 1
-            debug_info.append(f"  Filtered (too thin): bbox={rect_w}x{rect_h}")
+            debug_info.append(f"⚠ Filtered (too thin): bbox={rect_w}x{rect_h}")
             continue
 
         # 4. Filter by aspect ratio (not too elongated)
@@ -503,7 +609,7 @@ def detect_frames_by_contours(
         if aspect > max_aspect:
             filtered_stats["bad_aspect"] += 1
             debug_info.append(
-                f"  Filtered (aspect={aspect:.1f}): bbox={rect_w}x{rect_h}"
+                f"⚠ Filtered (aspect={aspect:.1f}): bbox={rect_w}x{rect_h}"
             )
             continue
 
@@ -513,7 +619,7 @@ def detect_frames_by_contours(
         if fill_ratio < MIN_FILL_RATIO:
             filtered_stats["bad_fill"] += 1
             debug_info.append(
-                f"  Filtered (open contour): bbox={rect_w}x{rect_h}, fill_ratio={fill_ratio:.2f}"
+                f"⚠ Filtered (open contour): bbox={rect_w}x{rect_h}, fill_ratio={fill_ratio:.2f}"
             )
             continue
 
@@ -537,8 +643,6 @@ def detect_frames_by_contours(
     # Now check hierarchy relationships among valid candidates
     # Rule: If sum(children) >= 30% parent -> remove parent
     #       If sum(children) < 30% parent -> remove children
-
-    logger = logging.getLogger(__name__)
 
     # Build index map for quick lookup
     idx_to_frame = {frame["idx"]: i for i, frame in enumerate(frames)}
@@ -579,7 +683,7 @@ def detect_frames_by_contours(
                     frames_to_remove.add(i)
                     filtered_stats["parent_boundary"] += 1
                     debug_info.append(
-                        f"  Filtered (parent boundary with {len(children_indices)} children, {children_ratio:.1%} filled): "
+                        f"⚠ Filtered (parent boundary with {len(children_indices)} children, {children_ratio:.1%} filled): "
                         f"bbox={frame['w']}x{frame['h']}"
                     )
                     logger.debug("  → Removing parent (boundary)")
@@ -755,7 +859,7 @@ def detect_frames_by_contours(
                     f"Merging frames: {frame['w']}x{frame['h']} + {other['w']}x{other['h']} "
                     f"-> {merged_frame['w']}x{merged_frame['h']} (overlap={overlap_ratio:.1%} of smaller)"
                 )
-                print(
+                logger.debug(
                     f"  🔗 Merged overlapping frames: {frame['w']}x{frame['h']} + {other['w']}x{other['h']} "
                     f"-> {merged_frame['w']}x{merged_frame['h']} (overlap={overlap_ratio:.1%} of smaller block)"
                 )
@@ -765,18 +869,14 @@ def detect_frames_by_contours(
                 merged_with_any = True
                 # Continue checking for more frames to merge
 
-            elif overlap_ratio > 0.0:  # Has overlap but < 80%
-                # REMOVE smaller frame (it's likely noise or artifact)
-                logger.debug(
-                    f"Removing overlapping frame: {other['w']}x{other['h']} "
-                    f"(overlap={overlap_ratio:.1%} < 80% of smaller block)"
-                )
-                print(
-                    f"  ⚠ Removed overlapping frame: {other['w']}x{other['h']}px "
-                    f"(overlap={overlap_ratio:.1%} of smaller block, threshold=80%)"
-                )
-                processed.add(j)
-                frames_removed_by_overlap += 1
+            # elif overlap_ratio > 0.0:  # Has overlap but < 80%
+            #     # REMOVE smaller frame (it's likely noise or artifact)
+            #     logger.debug(
+            #         f"  ⚠ Removed overlapping frame: {other['w']}x{other['h']}px "
+            #         f"(overlap={overlap_ratio:.1%} of smaller block, threshold=80%)"
+            #     )
+            #     processed.add(j)
+            #     frames_removed_by_overlap += 1
 
         frames_to_keep.append(frame)
         processed.add(i)
@@ -787,22 +887,26 @@ def detect_frames_by_contours(
     for frame in frames:
         frame.pop("idx", None)  # Remove idx, not needed by caller
 
-    print(
-        f"  Filtered: {filtered_stats['too_small']} too small, "
+    logger.debug(
+        f"⚠ Filtered: {filtered_stats['too_small']} too small, "
         f"{filtered_stats['bad_aspect']} bad aspect, "
         f"{filtered_stats['bad_fill']} bad fill ratio, "
         f"{filtered_stats['parent_boundary']} parent boundaries"
     )
     if frames_merged > 0:
-        print(f"  Merged: {frames_merged} frames combined")
+        logger.debug(f"  Merged: {frames_merged} frames combined")
     if frames_removed_by_overlap > 0:
-        print(f"  Removed: {frames_removed_by_overlap} overlapping frames")
+        logger.debug(f"  Removed: {frames_removed_by_overlap} overlapping frames")
 
     if debug_info:
-        print(f"  Debug - ALL {len(debug_info)} filtered contours:")
+        logger.debug(f"  Debug - ALL {len(debug_info)} significant filtered contours:")
         for info in debug_info:
-            print(info)
-
+            logger.debug(info)
+    logger.debug(f"Found {len(frames)} potential frames")
+    for i, frame in enumerate(frames):
+        logger.debug(
+            f"  Frame {i+1}: {frame['w']}x{frame['h']}px, Area: {frame['area']:.0f}, Aspect: {frame['aspect']:.1f}, Fill: {frame['fill_ratio']:.1%}"
+        )
     return frames
 
 
@@ -841,7 +945,7 @@ def extract_edges_from_frames(
         cv2.line(line_image, (x, y), (x, y + rect_h), 255, 2)  # Left
         cv2.line(line_image, (x + rect_w, y), (x + rect_w, y + rect_h), 255, 2)  # Right
 
-    print(
+    logger.debug(
         f"Detected {len(horizontal_lines)} horizontal and {len(vertical_lines)} vertical lines"
     )
 
@@ -852,6 +956,8 @@ def extract_frame_dimensions(
     frames: List[Dict[str, Any]], lines: Tuple[List, List]
 ) -> List[Dict[str, Any]]:
     """Extract precise dimensions from frames using detected lines and filter invalid frames."""
+    logger = logging.getLogger("extract_frame_dimensions")
+
     h_lines, v_lines = lines
 
     enhanced_frames = []
@@ -936,7 +1042,7 @@ def extract_frame_dimensions(
         if is_valid:
             filtered_frames.append(frame)
         else:
-            print(
+            logger.debug(
                 f"  ⚠ Filtered noisy frame: {frame['w']}x{frame['h']}px "
                 f"(only {frame['h_lines_count']}H + {frame['v_lines_count']}V lines, area={area:.0f})"
             )

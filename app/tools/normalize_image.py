@@ -1,9 +1,11 @@
+import logging
 from pathlib import Path
 import shutil
 from typing import Optional, Tuple
 
 import numpy as np
 import cv2
+from app.tools.blockprocess import remove_diagonal_lines
 from app.tools.image_process import (
     ImagePipeline,
     adaptive_threshold,
@@ -96,18 +98,74 @@ def _resize_short_edge(image: np.ndarray, target_short: int) -> np.ndarray:
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def smart_resize(img: np.ndarray, min_size: int = 800, max_size: int = 1920):
+def smart_resize(
+    img: np.ndarray,
+    min_size: int = 960,
+    max_size: int = 1920,
+) -> Tuple[np.ndarray, float]:
     h, w = img.shape[:2]
-    # Only upscale if extremely small (< 800px)
+    logger = logging.getLogger("smart_resize")
+
+    # Scale up nếu ảnh nhỏ (OCR thường lỗi khi chiều ngắn < 800)
     if min(h, w) < min_size:
         scale = min_size / min(h, w)
-        return cv2.resize(
-            img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC
-        )
-    # If too large, downscale
-    elif max(h, w) > max_size:
-        return resize_with_limit(img, max_size, max_size)[0]
-    return img
+        new_w, new_h = int(w * scale), int(h * scale)
+        logger.debug(f"Upscale image: {w}x{h} → {new_w}x{new_h} (scale={scale:.2f})")
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        return resized, scale
+
+    # Scale down nếu ảnh quá lớn (tăng tốc contour detect)
+    if max(h, w) > max_size:
+        scale = max_size / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        logger.debug(f"Downscale image: {w}x{h} → {new_w}x{new_h} (scale={scale:.2f})")
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return resized, scale
+
+    logger.debug(f"Keep original size: {w}x{h}")
+    return img, 1.0
+
+
+# def smart_resize(
+#     img: np.ndarray,
+#     min_short_side: int = 960,
+#     max_long_side: int = 1920,
+#     max_pixels: int = 6_000_000,
+# ) -> Tuple[np.ndarray, float]:
+#     h, w = img.shape[:2]
+#     logger = logging.getLogger("smart_resize")
+
+#     short_side = min(h, w)
+#     long_side = max(h, w)
+
+#     # Upscale if too small, but cap the upscale factor to avoid artifacts
+#     if short_side < min_short_side:
+#         desired_scale = min_short_side / short_side
+#         # cap scale to 2.0; if >2 recommend super-resolution instead of naive resize
+#         scale = min(desired_scale, 2.0)
+#         if desired_scale > 2.0:
+#             logger.warning(
+#                 f"Requested upscale {desired_scale:.2f}x > 2.0x; "
+#                 "consider using a super-resolution model for better OCR results."
+#             )
+#         new_w, new_h = int(round(w * scale)), int(round(h * scale))
+#         logger.info(f"Upscale: {w}x{h} → {new_w}x{new_h} (scale={scale:.2f})")
+#         resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+#         return resized, scale
+
+#     # Downscale if too large by long side or by pixel count
+#     scale_by_long = max_long_side / long_side if long_side > max_long_side else 1.0
+#     scale_by_pixels = (max_pixels / (w * h)) ** 0.5 if (w * h) > max_pixels else 1.0
+#     scale = min(scale_by_long, scale_by_pixels)
+
+#     if scale < 1.0:
+#         new_w, new_h = int(round(w * scale)), int(round(h * scale))
+#         logger.info(f"Downscale: {w}x{h} → {new_w}x{new_h} (scale={scale:.2f})")
+#         resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+#         return resized, scale
+
+#     logger.debug(f"Keep original size: {w}x{h}")
+#     return img, 1.0
 
 
 def light_sharpen(img):
@@ -179,7 +237,8 @@ def normalize_frame(
     resize_result = {"scale": 1.0}
 
     def resize_and_capture(img):
-        resized, scale = resize_with_limit(img, 1920, 1920)
+        # resized, scale = resize_with_limit(img, 1920, 1920)
+        resized, scale = smart_resize(img)
         resize_result["scale"] = scale
         return resized
 
@@ -213,14 +272,25 @@ def normalize_frame(
     return output_image, resize_result["scale"]
 
 
-def normalize_text(image: np.ndarray, output_path: Optional[Path] = None) -> np.ndarray:
+def normalize_text(
+    image: np.ndarray, output_path: Optional[Path] = None
+) -> Tuple[np.ndarray, float]:
     if image is None or (hasattr(image, "size") and image.size == 0):
         raise ValueError("normalize_image: input image is empty or None")
     pipeline = ImagePipeline(output_path)
 
-    # pipeline.add("smart_resize", lambda image: smart_resize(image, 800, 1920))
+    resize_result = {"scale": 1.0}
+
+    def resize_and_capture(img: np.ndarray) -> np.ndarray:
+        resized, scale = smart_resize(img)
+        resize_result["scale"] = scale
+        return resized
+
+    pipeline.add("resize", resize_and_capture)
     pipeline.add("to_gray", to_gray)
     pipeline.add("normalize_bg", normalize_bg)
+    # pipeline.add("remove_diagonals", remove_diagonal_lines)
+
     # pipeline.add("blur", lambda image: cv2.medianBlur(image, 3))
     # pipeline.add("blur", lambda image: cv2.GaussianBlur(image, (3, 3), 0))
     # pipeline.add("clahe", clahe)
@@ -245,7 +315,7 @@ def normalize_text(image: np.ndarray, output_path: Optional[Path] = None) -> np.
     # pipeline.add("bridge_horizontal", lambda image: bridge_horizontal(image, (1, 1), 2))
     # pipeline.add("invert_background", invert_background)
     output_image = pipeline.run(image)
-    return output_image
+    return output_image, resize_result["scale"]
 
 
 if __name__ == "__main__":
@@ -254,9 +324,7 @@ if __name__ == "__main__":
     # img_path = Path("outputs/24a94f1546374c16b54e1e411cc96010/Block 1/00_origin.png")
     # img_path = Path("outputs/c7895b9a60794796bcdb6568edda235b/Block 0/00_origin.png")
     # img_path = Path("outputs/22609b998d2c4ce28e6bceb77b92ffb2/Block 0/00_origin.png")
-    img_path = Path(
-        "outputs/test_pipeline_dims_classify/Block 0/normalized_ocr/00_origin.png"
-    )
+    img_path = Path("outputs2/pipeline/6333e83e/Block 0/normalized_ocr/00_origin.png")
 
     output_dir = Path("outputs", "normalize_text")
     if output_dir.exists():

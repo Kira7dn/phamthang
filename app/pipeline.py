@@ -23,7 +23,7 @@ from app.tools.normalize_image import normalize_frame, normalize_text
 from app.tools.vision_ocr import ocr_text
 
 
-logger = logging.getLogger("app.pipeline")
+logger = logging.getLogger(__name__)
 
 
 def _get_block_dir(
@@ -92,7 +92,7 @@ class ExtractPanelPipeline:
 
             # Normalize và run OCR
             ocr_dir = _get_block_dir(self.output_dir, block_id, "normalized_ocr")
-            ocr_img = normalize_text(block_img, ocr_dir)
+            ocr_img, ocr_scale = normalize_text(block_img, ocr_dir)
             # ocr_img = block_img.copy()
 
             ocr_out_dir = _get_block_dir(self.output_dir, block_id, "vision_ocr")
@@ -111,6 +111,17 @@ class ExtractPanelPipeline:
 
             # Call Vision OCR (returns List[OCRTextBlock])
             ocr_blocks = ocr_text(image_base64, output_dir=ocr_out_dir)
+
+            if ocr_blocks:
+                inv_scale = 1.0 / ocr_scale if ocr_scale not in (0.0, None) else 1.0
+                for block_data in ocr_blocks:
+                    if not block_data.bounding_box:
+                        continue
+                    for vertex in block_data.bounding_box:
+                        if vertex.x is not None:
+                            vertex.x = int(round(vertex.x * inv_scale))
+                        if vertex.y is not None:
+                            vertex.y = int(round(vertex.y * inv_scale))
 
             # Classify dimensions (ngay sau khi có frames và OCR)
             if ocr_blocks and frames:
@@ -207,30 +218,30 @@ class ExtractPanelPipeline:
 def main() -> None:
     load_dotenv()
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # img_path = Path("assets/19b2e788907a1a24436b.jpg")
+    img_path = Path("assets/19b2e788907a1a24436b.jpg")
     # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
-    thin5_thin3 = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
+    # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path("assets/z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
     # img_path = Path("assets/z7102259936013_b55eb7da65cf594e93eb2b8ff31af7b6.jpg")
     # img_path = Path("assets/z7070874695339_7eec1b9a231e267bca5e9e795f4f630d.jpg")
     # img_path = Path("assets/442f97ecdcf251ac08e3.jpg")
+    # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path(
     #     "assets/17102025/z7123665442467_dd861eca02ee6a0736de4928efb9420e.jpg"
     # )
-    # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
     # img_path = Path(
     #     "assets/17102025/z7123768633710_4cbbff36de040eaf5927947043693c29.jpg"
     # )
     # img_path = Path(
     #     "assets/17102025/z7123791968224_14635243a74af983d35821e934ddfcea.jpg"
     # )
-    img_path = Path(
-        "assets/17102025/z7123797395329_3b42c63e3bbcb86713c86bb3e2a21824.jpg"
-    )
+    # img_path = Path(
+    #     "assets/17102025/z7123797395329_3b42c63e3bbcb86713c86bb3e2a21824.jpg"
+    # )
 
     # Generate unique output directory with UUID
     run_id = uuid.uuid4().hex[:8]  # Use first 8 chars of UUID

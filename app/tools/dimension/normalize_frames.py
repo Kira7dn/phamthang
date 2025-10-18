@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 def normalize_frames_fast(
@@ -89,7 +88,7 @@ def normalize_frames_fast(
             for f in g:
                 f["normalized_h"] = norm_h
 
-    logger.info(
+    logger.debug(
         f"normalize_frames_fast: {len(frames_copy)} frames → "
         f"{len(row_groups)} rows, {len(col_groups)} cols"
     )
@@ -103,7 +102,7 @@ def main():
     for sample in samples:
         frames = sample.get("frames", [])
         normalized = normalize_frames_fast(frames)
-        logger.info(
+        logger.debug(
             "Sample %s (%s): %d frames normalized",
             sample.get("id"),
             sample.get("name"),
@@ -111,12 +110,12 @@ def main():
         )
         numbers = sample.get("numbers")
         if numbers:
-            logger.info("  Numbers: %s", numbers)
+            logger.debug("  Numbers: %s", numbers)
         expected = sample.get("expected")
         if expected:
-            logger.info("  Expected: %s", expected)
+            logger.debug("  Expected: %s", expected)
         for idx, (original, normed) in enumerate(zip(frames, normalized)):
-            logger.info(
+            logger.debug(
                 "  Frame %d: pos=(%s,%s) size=(%s,%s) → normalized_w=%s normalized_h=%s row_group=%s col_group=%s",
                 idx,
                 original.get("x"),
