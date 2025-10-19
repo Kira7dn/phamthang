@@ -5,11 +5,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic_ai import Agent, Tool
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 from app.tools.build_item_list import BuildItemOutput, build_item_list
 from app.models import SimplifiedFrame, Panel
@@ -18,47 +17,35 @@ from app.models import SimplifiedFrame, Panel
 logger = logging.getLogger("app.agent.build_item")
 
 
-class Block(BaseModel):
-    block_no: str
-    panels: list[Panel] = Field(default_factory=list)
-
-
-class AggregatedResult(BaseModel):
-    blocks: list[Block] = Field(default_factory=list)
-
-
 @Tool
-def build_item_tool(aggregated: AggregatedResult) -> BuildItemOutput:
+def build_item_tool(panels: List[Panel]) -> BuildItemOutput:
     """Aggregate frame items and hinge counts into material_list format."""
 
-    return build_item_list(aggregated)
+    return build_item_list(panels)
 
 
 BUILD_ITEM_SYSTEM_PROMPT = """
 You are an **Aluminum Frame Bill-of-Materials Agent**.
 
 Input JSON contains:
-- `blocks`: list of blocks, each with `block_no` and an array of `panels`.
-  Each panel provides `panel_index`, `outer_width`, `outer_height`, and `inner_heights` (hinge spacing segments).
-- `per_block_overrides`: optional overrides keyed by block number.
+- `panels`: list of panels, each with `panel_index`, `outer_width`, `outer_height`, and `inner_heights` (hinge spacing segments).
 
 Your tasks:
-1. Produce an `AggregatedResult` payload suitable for the tool call:
-   - Preserve every block and panel.
+1. Produce an `PanelList` payload suitable for the tool call:
+   - Preserve every panel.
    - Ensure each panel includes numeric `outer_width`, `outer_height`, and an `inner_heights` list.
-     * If a panel is missing spacing data, infer the most reasonable sequence before calling the tool.
-       Reuse hinge spacing from panels of identical dimensions, apply `defaults` / `per_block_overrides`, or derive a symmetrical layout that sums to the panel height.
-      * When multiple orderings are plausible, reorder the segments so the hinge spacing transitions remain balanced and realistic around the panel.
-      * In typical doors, the top and bottom segments are shorter than interior segments; maintain this characteristic and aim for overall symmetry.
-     * Only leave `inner_heights` empty when there is no reliable information to infer from.
-   - You may carry forward descriptive metadata (material, note, overrides) in your reasoning, but the tool only consumes the geometry fields.
-2. Call `build_item_tool` **once** with the final `AggregatedResult` JSON as its argument.
+    * Keep the original `inner_heights` sequence when their sum matches `outer_height` within ±5mm.
+      * If have big gap between sum of inner_heights compare to outer_height, refer and add that gap as additional segment.
+     * Never merge adjacent segments into a new combined value.
+     * When inferring new spacing, prioritize reusing values from panels of identical dimensions or build a symmetrical layout while guaranteeing the sum equals `outer_height`.
+     * Only leave `inner_heights` empty when no safe inference can be made from available data.
+2. Call `build_item_tool` **once** with the final `PanelList` JSON as its argument.
 3. Return JSON **only** with the schema:
    {
      "material_list": [...]
    }
-   - `material_list` must be exactly the tool output; do not reorder, filter, or edit entries except to ensure valid JSON serialization.
-   - `material_list` contains the fields `type`, `size`, `unit`, `quantity`, and `note`. Preserve numeric precision (round quantities to two decimals when needed) and keep the note text unchanged.
+   - `material_list` must be exactly the tool output.
+   - `material_list` contains the fields `type`, `size`, `unit`, `quantity`, and `note`.
    - Do not include any explanations or extra keys outside the schema.
 """
 
@@ -91,48 +78,21 @@ class BuildItemAgent:
             raise RuntimeError(message)
         logger.info("OPENAI_API_KEY detected, proceeding with BuildItemAgent")
 
-    def run(self, data) -> BuildItemOutput:
+    def run(self, data: List[SimplifiedFrame]) -> BuildItemOutput:
         self._ensure_api_key()
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Accept either list[SimplifiedFrame] or AggregatedResult/dict
-        if isinstance(data, list):
-            frames: list[SimplifiedFrame] = data
-            blocks = [
-                Block(
-                    block_no=frame.id,
-                    panels=[
-                        Panel(
-                            panel_index=idx,
-                            outer_width=panel.outer_width,
-                            outer_height=panel.outer_height,
-                            inner_heights=panel.inner_heights,
-                        )
-                        for idx, panel in enumerate(frame.panels)
-                    ],
-                )
-                for frame in frames
-            ]
-            payload = AggregatedResult(blocks=blocks)
-        elif isinstance(data, AggregatedResult):
-            payload = data
-        elif isinstance(data, dict):
-            try:
-                payload = AggregatedResult.model_validate(data)
-            except Exception:
-                payload = AggregatedResult(blocks=[])
-        else:
-            payload = AggregatedResult(blocks=getattr(data, "blocks", []))
-        payload_str = json.dumps(payload.model_dump(), ensure_ascii=False)
+        payload = [panel for block in data for panel in block.panels]
+        payload_str = json.dumps(
+            [panel.model_dump() for panel in payload], ensure_ascii=False
+        )
         logger.info(
-            "Running BuildItemAgent block_count=%d model=%s",
-            len(payload.blocks),
+            "Running BuildItemAgent panel_count=%d model=%s",
+            len(payload),
             self.model_id,
         )
         result = self.agent.run_sync(payload_str)
         logger.info("BuildItemAgent completed")
-        output: BuildItemOutput
         if isinstance(result.output, BuildItemOutput):
             output = result.output
         else:
@@ -158,7 +118,7 @@ def main() -> None:
         print("Thiếu biến môi trường OPENAI_API_KEY cho OpenAI API", file=sys.stderr)
         sys.exit(1)
 
-    input_path = Path("outputs/e0b1fbe9b1be48faa8a7f1e52499324b/stage2.json")
+    input_path = Path("outputs2/pipeline/8e2aa1c2/Block 0/dimensions_classified.json")
     if not input_path.exists():
         print(
             f"Không tìm thấy file đầu vào: {input_path}",
@@ -171,12 +131,14 @@ def main() -> None:
     #     shutil.rmtree(output_dir)
 
     aggregated_json = input_path.read_text(encoding="utf-8")
-    aggregated = AggregatedResult.model_validate_json(aggregated_json)
-
+    aggregated = json.loads(aggregated_json)
+    panels = aggregated.get("panels")
+    frame = {"id": "0", "panels": panels}
+    simplified_frames = [SimplifiedFrame(**frame)]
+    print(simplified_frames)
     agent = BuildItemAgent(output_dir=output_dir)
-    result = agent.run(aggregated)
-
-    print(f"Output return type of {type(result)}")
+    result = agent.run(simplified_frames)
+    print(result)
 
 
 if __name__ == "__main__":

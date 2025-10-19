@@ -16,9 +16,6 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import HttpUrl
 from dotenv import load_dotenv
 
-from app.pipeline import ExtractPanelPipeline
-
-
 log_format = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 is_production = os.getenv("IS_PRODUCTION", "").lower() == "true"
 

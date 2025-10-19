@@ -427,7 +427,7 @@ def remove_diagonal_lines(binary: np.ndarray) -> np.ndarray:
     return cleaned
 
 
-def remove_fold_lines(binary: np.ndarray, border_margin: int = 20) -> np.ndarray:
+def remove_fold_lines(binary: np.ndarray, border_margin: int = 10) -> np.ndarray:
     """Remove vertical/horizontal lines near image borders.
 
     Strategy:

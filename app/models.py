@@ -89,11 +89,11 @@ class BoundingRect(BaseModel):
 class Panel(BaseModel):
     """Panel with outer dimensions and inner heights."""
 
-    panel_index: int
+    # panel_index: Optional[int] = None
     outer_width: float
     outer_height: float
     inner_heights: List[float] = Field(default_factory=list)
-    frame_pixel: Optional[FramePixel] = None
+    # frame_pixel: Optional[FramePixel] = None
 
 
 class DimensionResult(BaseModel):

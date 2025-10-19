@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from collections.abc import Sequence
@@ -8,6 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import statistics
 
 from pydantic import BaseModel
+
+from app.models import Panel
+
+
+logger = logging.getLogger("app.tools.build_item_list")
 
 
 class BOMItem(BaseModel):
@@ -79,14 +85,16 @@ def infer_hinge_quantity(
     return max(min(hinge_count, 6), 2)
 
 
-def build_item_list(aggregated: Any) -> BuildItemOutput:
+def build_item_list(panels: List[Panel]) -> BuildItemOutput:
     """
-    Build material list from an aggregated payload.
+    Build material list from an panels payload.
 
     Accepts either:
-    - dict payload with shape {"blocks": [{"block_no": str, "panels": [...]}]}
-    - pydantic/BaseModel with attribute .blocks containing similar dicts/objects
+    - list payload with shape [{"outer_width": float, "outer_height": float, "inner_heights": [float]}]
     """
+    logger.info("Building material list from panels payload:")
+    for panel in panels:
+        logger.info(panel)
     aggregates: Dict[Tuple[str, str, str], Dict[str, float | int]] = {}
     ordered_keys: List[Tuple[str, str, str]] = []
 
@@ -124,42 +132,29 @@ def build_item_list(aggregated: Any) -> BuildItemOutput:
                     else:
                         entry[meta_key] = meta_value
 
-    # Resolve blocks from dict or model
-    if isinstance(aggregated, dict):
-        blocks = aggregated.get("blocks", [])
-    else:
-        blocks = getattr(aggregated, "blocks", [])
-
     hinge_total = 0
-    for block in blocks:
-        panels = block.get("panels", []) if isinstance(block, dict) else getattr(block, "panels", [])
-        for panel in panels:
-            if isinstance(panel, dict):
-                width = panel.get("outer_width")
-                height = panel.get("outer_height")
-                inner_heights = panel.get("inner_heights", [])
-            else:
-                width = getattr(panel, "outer_width", 0)
-                height = getattr(panel, "outer_height", 0)
-                inner_heights = getattr(panel, "inner_heights", [])
-            if not width or not height:
-                continue
+    for panel in panels:
+        width = panel.outer_width
+        height = panel.outer_height
+        inner_heights = panel.inner_heights
+        if not width or not height:
+            continue
 
-            area = (float(width) * float(height)) / 1_000_000
-            hinge_count = infer_hinge_quantity(inner_heights, float(height))
-            key = ("Khung nhôm", f"({width}mm x {height}mm)", "m²")
-            accumulate(
-                key,
-                quantity_increment=round(area, 2),
-                metadata={
-                    "width": width,
-                    "height": height,
-                    "hinge_spacings": [tuple(inner_heights)],
-                    "hinge_counts": [hinge_count],
-                },
-            )
+        area = (float(width) * float(height)) / 1_000_000
+        hinge_count = infer_hinge_quantity(inner_heights, float(height))
+        key = ("Khung nhôm", f"({width}mm x {height}mm)", "m²")
+        accumulate(
+            key,
+            quantity_increment=round(area, 2),
+            metadata={
+                "width": width,
+                "height": height,
+                "hinge_spacings": [tuple(inner_heights)],
+                "hinge_counts": [hinge_count],
+            },
+        )
 
-            hinge_total += hinge_count
+        hinge_total += hinge_count
 
     if hinge_total:
         hinge_key = ("Bản lề", "Hinge", "cái")
@@ -206,87 +201,59 @@ def build_item_list(aggregated: Any) -> BuildItemOutput:
 
 
 def main() -> None:
-    # sample = AggregatedResult.model_validate(
-    #     json.loads(
-    #         Path("outputs/24a94f1546374c16b54e1e411cc96010/stage2.json").read_text(
-    #             encoding="utf-8"
-    #         )
-    #     )
-    # )
-    sample_payload = {
-        "blocks": [
-            {
-                "block_no": "800x1500",
-                "panels": [
-                    {
-                        "panel_index": 1,
-                        "outer_width": 800,
-                        "outer_height": 1500,
-                        "inner_heights": [100.0, 400.0, 500, 400.0, 100],
-                    },
-                    {
-                        "panel_index": 2,
-                        "outer_width": 800,
-                        "outer_height": 1500,
-                        "inner_heights": [100.0, 400.0, 400.0, 100],
-                    },
-                    {
-                        "panel_index": 3,
-                        "outer_width": 800,
-                        "outer_height": 1500,
-                        "inner_heights": [100.0, 400.0, 500, 400.0],
-                    },
-                    {
-                        "panel_index": 4,
-                        "outer_width": 800,
-                        "outer_height": 1500,
-                        "inner_heights": [100.0, 400.0, 1500, 400.0, 100],
-                    },
-                    {
-                        "panel_index": 5,
-                        "outer_width": 0,
-                        "outer_height": 0,
-                        "inner_heights": [100.0, 400.0, 1500, 400.0, 100],
-                    },
-                ],
-            },
-            {
-                "block_no": "900*2000",
-                "panels": [
-                    {
-                        "panel_index": 1,
-                        "outer_width": 900,
-                        "outer_height": 2000,
-                        "inner_heights": [300.0, 400.0, 600, 400.0, 300],
-                    },
-                    {
-                        "panel_index": 2,
-                        "outer_width": 900,
-                        "outer_height": 2000,
-                        "inner_heights": [300.0, 400.0, 400.0, 300],
-                    },
-                    {
-                        "panel_index": 3,
-                        "outer_width": 900,
-                        "outer_height": 2000,
-                        "inner_heights": [300.0, 400.0, 600, 400.0],
-                    },
-                    {
-                        "panel_index": 4,
-                        "outer_width": 900,
-                        "outer_height": 2000,
-                        "inner_heights": [300.0, 400.0, 1600, 400.0, 300],
-                    },
-                    {
-                        "panel_index": 5,
-                        "outer_width": 0,
-                        "outer_height": 0,
-                        "inner_heights": [300.0, 400.0, 1600, 400.0, 300],
-                    },
-                ],
-            },
-        ]
-    }
+    logging.basicConfig(level=logging.INFO)
+    sample_payload = [
+        {
+            "outer_width": 800,
+            "outer_height": 1500,
+            "inner_heights": [100.0, 400.0, 500, 400.0, 100],
+        },
+        {
+            "outer_width": 800,
+            "outer_height": 1500,
+            "inner_heights": [100.0, 400.0, 400.0, 100],
+        },
+        {
+            "outer_width": 800,
+            "outer_height": 1500,
+            "inner_heights": [100.0, 400.0, 500, 400.0],
+        },
+        {
+            "outer_width": 800,
+            "outer_height": 1500,
+            "inner_heights": [100.0, 400.0, 1500, 400.0, 100],
+        },
+        {
+            "outer_width": 0,
+            "outer_height": 0,
+            "inner_heights": [100.0, 400.0, 1500, 400.0, 100],
+        },
+        {
+            "outer_width": 900,
+            "outer_height": 2000,
+            "inner_heights": [300.0, 400.0, 600, 400.0, 300],
+        },
+        {
+            "outer_width": 900,
+            "outer_height": 2000,
+            "inner_heights": [300.0, 400.0, 400.0, 300],
+        },
+        {
+            "outer_width": 900,
+            "outer_height": 2000,
+            "inner_heights": [300.0, 400.0, 600, 400.0],
+        },
+        {
+            "outer_width": 900,
+            "outer_height": 2000,
+            "inner_heights": [300.0, 400.0, 1600, 400.0, 300],
+        },
+        {
+            "outer_width": 0,
+            "outer_height": 0,
+            "inner_heights": [300.0, 400.0, 1600, 400.0, 300],
+        },
+    ]
 
     # Run with plain dict payload (no external model dependency)
     result = build_item_list(sample_payload)

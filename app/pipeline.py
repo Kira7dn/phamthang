@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 import uuid
 import base64
 
@@ -10,17 +10,18 @@ import cv2
 from dotenv import load_dotenv
 import numpy as np
 
-from app.agent.item_builder import BuildItemAgent
 from app.models import (
     MaterialItem,
     PipelineResult,
     SimplifiedFrame,
+    Panel,
 )
 from app.tools.cluster_image import cluster_blocks
 from app.tools.frame_detection import detect_frames
 from app.tools.dimension.dims_classify import classify_dimensions
 from app.tools.normalize_image import normalize_frame, normalize_text
 from app.tools.vision_ocr import ocr_text
+from app.tools.build_item_list import build_item_list
 
 
 logger = logging.getLogger(__name__)
@@ -41,14 +42,9 @@ class ExtractPanelPipeline:
 
     def __init__(
         self,
-        item_model_id: str = "openai:gpt-4o-mini",
         output_dir: Optional[Path] = None,
     ) -> None:
         self.output_dir = output_dir
-        self.item_agent = BuildItemAgent(
-            output_dir=output_dir,
-            model_id=item_model_id,
-        )
 
     def run(self, image: Union[np.ndarray, Path]) -> PipelineResult:
         # Kiểm tra image_input là Path hay numpy array
@@ -61,7 +57,7 @@ class ExtractPanelPipeline:
         logger.info(f"Extracted block images - block_count={len(block_images)}")
 
         # 2) Xử lý từng block: normalize, frame detection, OCR, dimensions
-        simplified_frames = []  # Build directly in loop
+        simplified_frames: List[SimplifiedFrame] = []  # Build directly in loop
 
         for i, block_img in enumerate(block_images):
             block_id = str(i)
@@ -169,9 +165,19 @@ class ExtractPanelPipeline:
                 )
 
         # 4) Build bill of materials (using SimplifiedFrame directly)
-        items_result = self.item_agent.run(simplified_frames)
+        panels_payload: list[Panel] = []
+        for sf in simplified_frames:
+            for p in sf.panels:
+                panels_payload.append(
+                    Panel(
+                        outer_width=p.outer_width,
+                        outer_height=p.outer_height,
+                        inner_heights=p.inner_heights,
+                    )
+                )
+        items_output = build_item_list(panels_payload)
         logger.info(
-            f"Bill of materials built - item_count={len(items_result.material_list)}"
+            f"Bill of materials built - item_count={len(items_output.material_list)}"
         )
 
         # 3) Calculate overall confidence from simplified_frames
@@ -198,7 +204,7 @@ class ExtractPanelPipeline:
                     quantity=item.quantity,
                     note=item.note,
                 )
-                for item in items_result.material_list
+                for item in items_output.material_list
             ],
             confidence=overall_confidence,
         )

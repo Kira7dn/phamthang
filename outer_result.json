@@ -1,0 +1,19 @@
+{
+    "width": {
+        "text": "548",
+        "bounding_box": [],
+        "confidence": 0.0
+    },
+    "height": {
+        "text": "2269",
+        "bounding_box": [],
+        "confidence": 0.0
+    },
+    "width_text": "548",
+    "height_text": "2269",
+    "width_value": 548.0,
+    "height_value": 2269.0,
+    "scale_x": 6.088889,
+    "scale_y": 5.6725,
+    "aspect_diff_ratio": 0.073405
+}

@@ -27,9 +27,9 @@ def score_consistency(
     Chấm điểm tính nhất quán: các frame có cùng pixel dimension phải có cùng mm dimension.
 
     Logic:
-    - Group frames theo normalized_w: các frame cùng nhóm phải có cùng outer_width
-    - Group frames theo normalized_h: các frame cùng nhóm phải có cùng outer_height
-    - Score per group = 1.0 nếu tất cả cùng giá trị, giảm dần theo số giá trị khác nhau
+    - Lấy toàn bộ `scale_x`, `scale_y` từ `results`
+    - Đánh giá độ ổn định dựa trên độ biến thiên tương đối
+    - Score per group = 1.0 nếu scale ổn định tuyệt đối, giảm dần khi độ lệch tăng
     - Trả về: {
         'width_consistency': avg score across width groups,
         'height_consistency': avg score across height groups,
@@ -51,48 +51,51 @@ def score_consistency(
             "overall_consistency": 1.0,
         }
 
-    # Group by pixel width
-    width_groups = defaultdict(list)
-    for i, f in enumerate(frames):
-        norm_w = getattr(f, "normalized_w", f.w)
-        if i in results:
-            width_groups[norm_w].append(results[i].get("width"))
+    def _safe_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
-    # Group by pixel height
-    height_groups = defaultdict(list)
-    for i, f in enumerate(frames):
-        norm_h = getattr(f, "normalized_h", f.h)
-        if i in results:
-            height_groups[norm_h].append(results[i].get("height"))
+    def _scale_consistency(values: List[float]) -> float:
+        if len(values) <= 1:
+            return 1.0
+        min_val = min(values)
+        max_val = max(values)
+        if max_val <= 0:
+            return 0.0
+        spread = (max_val - min_val) / max_val
+        return max(0.0, 1.0 - spread)
 
-    # Score width groups
-    width_scores = []
-    for pixel_w, mm_widths in width_groups.items():
-        unique_vals = len(set(mm_widths))
-        # Score = 1.0 if all same, decrease by number of unique values
-        score = max(0.0, 1.0 - (unique_vals - 1) * 0.3)
-        width_scores.append(score)
+    scale_x_values: List[float] = []
+    scale_y_values: List[float] = []
 
-    # Score height groups
-    height_scores = []
-    for pixel_h, mm_heights in height_groups.items():
-        unique_vals = len(set(mm_heights))
-        score = max(0.0, 1.0 - (unique_vals - 1) * 0.3)
-        height_scores.append(score)
+    for dims in results.values():
+        sx = _safe_float(dims.get("scale_x"))
+        sy = _safe_float(dims.get("scale_y"))
+
+        if sx is not None and sx > 0:
+            scale_x_values.append(sx)
+        if sy is not None and sy > 0:
+            scale_y_values.append(sy)
+
+    width_consistency = _scale_consistency(scale_x_values)
+    height_consistency = _scale_consistency(scale_y_values)
+
+    overall_components: List[float] = []
+    if scale_x_values:
+        overall_components.append(width_consistency)
+    if scale_y_values:
+        overall_components.append(height_consistency)
+
+    overall_consistency = (
+        sum(overall_components) / len(overall_components) if overall_components else 1.0
+    )
 
     return {
-        "width_consistency": (
-            sum(width_scores) / len(width_scores) if width_scores else 1.0
-        ),
-        "height_consistency": (
-            sum(height_scores) / len(height_scores) if height_scores else 1.0
-        ),
-        "overall_consistency": (
-            (sum(width_scores) + sum(height_scores))
-            / (len(width_scores) + len(height_scores))
-            if (width_scores or height_scores)
-            else 1.0
-        ),
+        "width_consistency": width_consistency,
+        "height_consistency": height_consistency,
+        "overall_consistency": overall_consistency,
     }
 
 
