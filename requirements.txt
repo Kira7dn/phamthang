@@ -1,5 +1,4 @@
 opencv-python
-numpy
 matplotlib
 pydantic-ai-slim[google,openai]
 python-dotenv

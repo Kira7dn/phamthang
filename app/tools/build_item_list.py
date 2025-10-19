@@ -72,12 +72,12 @@ def infer_hinge_quantity(
     ratio = total_inner / height_mm if height_mm else 1.0
 
     # --- 3️⃣ Nếu nghi ngờ mất OCR (thiếu đoạn nhỏ) ---
-    if 0.5 < ratio < 0.8:
+    if 0.5 < ratio < 0.85:
         # giữ nguyên số đoạn, không cộng thêm
         return max(len(segments), base_hinges)
 
     # --- 4️⃣ Fallback: tính gần đúng ---
-    hinge_count = len(segments) + 1
+    hinge_count = len(segments)
     if height_mm and abs(total_inner - height_mm) > avg:
         adjustment = round((height_mm - total_inner) / avg * 0.3)
         hinge_count = max(hinge_count + adjustment, base_hinges)
@@ -258,7 +258,7 @@ def main() -> None:
     # Run with plain dict payload (no external model dependency)
     result = build_item_list(sample_payload)
     result_payload = result.model_dump()
-    output_dir = Path("outputs/panel_agent/item_builder")
+    output_dir = Path("outputs/item_builder")
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "build_item_list.json").write_text(
         json.dumps(result_payload, ensure_ascii=False, indent=2),

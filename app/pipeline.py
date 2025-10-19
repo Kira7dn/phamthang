@@ -227,7 +227,8 @@ def main() -> None:
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    img_path = Path("assets/19b2e788907a1a24436b.jpg")
+    # img_path = Path("assets/19b2e788907a1a24436b.jpg")
+    img_path = Path("assets\z7070874630879_9b10f5140abae79dee0421db84193312.jpg")
     # img_path = Path("assets/z7070874630878_585ee684038aad2c9e213817e6749e12.jpg")
     # img_path = Path("assets/z7064219010311_67ae7d4dca697d1842b79755dd0c1b4c.jpg")
     # img_path = Path("assets/z7064218874273_30187de327e4ffc9c1886f540a5f2f30.jpg")
